@@ -78,12 +78,12 @@ impl NewPipe {
         let paused = Arc::new(Mutex::new(false));
         let stopped = Arc::new(Mutex::new(false));
 
-        // Check if FD 3 is valid (simple way: try to get metadata)
-        let signals = if unsafe { libc::fcntl(3, libc::F_GETFD) } != -1 {
-            Some(SignalPlane::new(3))
-        } else {
-            None
-        };
+        // Explicitly check for the signal FD via environment variable
+        let signals = if let Ok(fd_str) = std::env::var("NEWPIPE_SIGNAL_FD") {
+            if let Ok(fd) = fd_str.parse::<i32>() {
+                Some(SignalPlane::new(fd))
+            } else { None }
+        } else { None };
 
         if let Some(ref sigs) = signals {
             let ready_clone = Arc::clone(&ready);
@@ -121,13 +121,13 @@ impl NewPipe {
                 payload: None,
             }).ok();
             
-            // Wait for 100ms for ACK
+            // Wait for ACK (Wait indefinitely because we KNOW we are in a smart env)
             let (lock, cvar) = &*np.ready;
-            let ready = lock.lock().unwrap();
-            let result = cvar.wait_timeout(ready, std::time::Duration::from_millis(100)).unwrap();
-            if *result.0 {
-                np.is_smart = true;
+            let mut ready = lock.lock().unwrap();
+            while !*ready {
+                ready = cvar.wait(ready).unwrap();
             }
+            np.is_smart = true;
         }
 
         np

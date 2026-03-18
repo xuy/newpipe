@@ -22,13 +22,15 @@ export class Shell {
     let prevProcess: ChildProcess | null = null;
     let prevIsSmart = false;
 
+    const env = { ...process.env, NEWPIPE_SIGNAL_FD: '3' };
+
     for (let i = 0; i < commands.length; i++) {
       const info = this.getCommandInfo(commands[i]!);
 
       // Bridge Gap (Smart/Legacy boundary)
       if (prevProcess && prevIsSmart !== info.isSmart) {
         const bridge = this.getCommandInfo(prevIsSmart ? 'lower' : 'lift');
-        const bridgeProc = spawn(bridge.fullPath, [], { stdio: ['pipe', 'pipe', 'inherit', 'pipe'] });
+        const bridgeProc = spawn(bridge.fullPath, [], { stdio: ['pipe', 'pipe', 'inherit', 'pipe'], env });
         prevProcess.stdout!.pipe(bridgeProc.stdin!);
         prevProcess = bridgeProc;
         processes.push(bridgeProc);
@@ -44,7 +46,7 @@ export class Shell {
         'pipe' // FD 3: Signal Plane
       ];
 
-      const proc = spawn(info.fullPath, info.args, { stdio });
+      const proc = spawn(info.fullPath, info.args, { stdio, env });
       if (prevProcess) prevProcess.stdout!.pipe(proc.stdin!);
 
       processes.push(proc);
