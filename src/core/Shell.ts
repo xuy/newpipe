@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { doctor } from './doctor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -24,19 +25,22 @@ interface CommandInfo {
   cmd: string;
   args: string[];
   fullPath: string;
-  isSmart: boolean;
+  isNewPipe: boolean;
 }
 
 export class Shell {
-  private builtins: Record<string, () => void> = {
+  private builtins: Record<string, () => void | Promise<void>> = {
     help: () => {
+      const cmds = this.discoverCommands();
+      const cmdNames = cmds.map(c => c.name).join(', ');
       console.log(`
 NewPipe - Rethinking Unix Pipes for Agents
 
-Commands: about, install, github, agent, help
-Built-ins: ls, cat, grep, head, tree, bcat, pcat, tcat, st-gen, to-st
+Builtins:  help, about, doctor
+Commands:  ${cmdNames}
+Legacy:    anything else falls through to system PATH
 
-Try: ls | head, pcat data.parquet | grep pattern
+Try: ls | head 2, cat data.json | grep pattern, doctor
       `);
     },
     about: () => {
@@ -48,34 +52,61 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
 2. Record-based Framing (Orthogonal Planes)
       `);
     },
+    doctor: () => doctor(this.getSearchDirs()),
     github: () => { console.log('GitHub: https://github.com/xuy/newpipe'); },
     agent: () => { console.log('Agent status: Connected, Sandbox ready.'); },
     install: () => { console.log('NewPipe is already installed and ready.'); }
   };
 
-  private getCommandInfo(part: string): CommandInfo {
-    const [cmd, ...args] = part.split(' ');
-    
-    // 1. Get NEWPIPE_PATH from env, defaulting to the internal bin
+  private getAdapterPath(name: string): string {
+    const adapterDir = path.join(__dirname, 'adapters');
+    const jsPath = path.join(adapterDir, name + '.js');
+    if (fs.existsSync(jsPath)) return jsPath;
+    return path.join(adapterDir, name);
+  }
+
+  getSearchDirs(): string[] {
     const internalBin = path.join(__dirname, '../../bin');
     const npPath = process.env.NEWPIPE_PATH || internalBin;
-    const searchDirs = npPath.split(path.delimiter);
+    return npPath.split(path.delimiter);
+  }
 
-    // 2. Search NEWPIPE_PATH for Smart Commands
-    for (const dir of searchDirs) {
+  discoverCommands(): { name: string; fullPath: string }[] {
+    const commands: { name: string; fullPath: string }[] = [];
+    const seen = new Set<string>();
+    for (const dir of this.getSearchDirs()) {
+      if (!fs.existsSync(dir)) continue;
+      for (const entry of fs.readdirSync(dir)) {
+        if (entry.startsWith('.') || entry.endsWith('.map') || entry.endsWith('.d.ts')) continue;
+        const fullPath = path.join(dir, entry);
+        if (!fs.statSync(fullPath).isFile()) continue;
+        const name = entry.replace(/\.(js|py|rs)$/, '');
+        if (!seen.has(name)) {
+          seen.add(name);
+          commands.push({ name, fullPath });
+        }
+      }
+    }
+    return commands.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private getCommandInfo(part: string): CommandInfo {
+    const [cmd, ...args] = part.split(' ');
+
+    // Search NEWPIPE_PATH for NewPipe commands
+    for (const dir of this.getSearchDirs()) {
       const fullPath = path.resolve(dir, cmd!);
       if (fs.existsSync(fullPath)) {
-        return { cmd: cmd!, args, fullPath, isSmart: true };
+        return { cmd: cmd!, args, fullPath, isNewPipe: true };
       }
-      // Also try with .js extension (for compiled TypeScript commands)
       const jsPath = fullPath + '.js';
       if (fs.existsSync(jsPath)) {
-        return { cmd: cmd!, args, fullPath: jsPath, isSmart: true };
+        return { cmd: cmd!, args, fullPath: jsPath, isNewPipe: true };
       }
     }
 
-    // 3. Fallback to system PATH (Legacy)
-    return { cmd: cmd!, args, fullPath: cmd!, isSmart: false };
+    // Fallback to system PATH (Legacy)
+    return { cmd: cmd!, args, fullPath: cmd!, isNewPipe: false };
   }
 
   async execute(commandLine: string) {
@@ -86,7 +117,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
       const parts = pipeParts[0]?.split(' ') ?? [];
       const cmd = parts[0];
       if (cmd && this.builtins[cmd]) {
-        this.builtins[cmd]!();
+        await this.builtins[cmd]!();
         return;
       }
     }
@@ -96,7 +127,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
     
     let processes: ChildProcess[] = [];
     let prevProcess: ChildProcess | null = null;
-    let prevIsSmart = false;
+    let prevIsNewPipe = false;
 
     const env = { ...process.env, NEWPIPE_SIGNAL_FD: '3' };
 
@@ -105,10 +136,10 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
 
       // Impedance Matching (Inject lower/lift if boundary crossed)
       // Bridge Gap (Smart/Legacy boundary)
-      if (prevProcess && prevIsSmart !== info.isSmart) {
-        const bridgeCmd = prevIsSmart ? 'lower' : 'lift';
-        const bridgeInfo = this.getCommandInfo(bridgeCmd);
-        const bridgeProc = spawn(bridgeInfo.fullPath, [], { stdio: ['pipe', 'pipe', 'inherit', 'pipe'], env });
+      if (prevProcess && prevIsNewPipe !== info.isNewPipe) {
+        const adapterName = prevIsNewPipe ? 'lower' : 'lift';
+        const adapterPath = this.getAdapterPath(adapterName);
+        const bridgeProc = spawn('node', [adapterPath], { stdio: ['pipe', 'pipe', 'inherit', 'pipe'], env });
 
         if (prevProcess.stdout && bridgeProc.stdin) {
           prevProcess.stdout.pipe(bridgeProc.stdin);
@@ -118,7 +149,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
       }
 
       const isRealLast = i === commands.length - 1;
-      const needsView = info.isSmart && isRealLast && !isViewPresent;
+      const needsView = info.isNewPipe && isRealLast && !isViewPresent;
 
       const stdio: any[] = [
         prevProcess ? 'pipe' : 'inherit',
@@ -132,11 +163,11 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
 
       processes.push(proc);
       prevProcess = proc;
-      prevIsSmart = info.isSmart;
+      prevIsNewPipe = info.isNewPipe;
     }
 
     // Auto-append VIEW if necessary
-    if (prevIsSmart && !isViewPresent) {
+    if (prevIsNewPipe && !isViewPresent) {
       const view = this.getCommandInfo('view');
       const viewProc = spawn(view.fullPath, [], { stdio: ['pipe', 'inherit', 'inherit', 'pipe'], env });
       prevProcess!.stdout!.pipe(viewProc.stdin!);
@@ -147,9 +178,14 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
     for (let i = 0; i < processes.length; i++) {
       const signalPipe = processes[i]!.stdio[3] as any;
       if (signalPipe) {
+        signalPipe.on('error', () => {});
         signalPipe.on('data', (chunk: Buffer) => {
-          if (i > 0 && processes[i-1]!.stdio[3]) (processes[i-1]!.stdio[3] as any).write(chunk);
-          if (i < processes.length - 1 && processes[i+1]!.stdio[3]) (processes[i+1]!.stdio[3] as any).write(chunk);
+          if (i > 0 && processes[i-1]!.stdio[3]) {
+            try { (processes[i-1]!.stdio[3] as any).write(chunk); } catch {}
+          }
+          if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
+            try { (processes[i+1]!.stdio[3] as any).write(chunk); } catch {}
+          }
         });
       }
     }
@@ -173,7 +209,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
         const chunks: string[] = [];
         const origLog = console.log;
         console.log = (...args: any[]) => { chunks.push(args.join(' ')); };
-        this.builtins[cmd]!();
+        await this.builtins[cmd]!();
         console.log = origLog;
         return {
           stdout: chunks.join('\n'),
@@ -191,7 +227,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
     let processes: ChildProcess[] = [];
     let commandNames: string[] = [];
     let prevProcess: ChildProcess | null = null;
-    let prevIsSmart = false;
+    let prevIsNewPipe = false;
 
     const env = {
       ...process.env,
@@ -204,10 +240,10 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
       const info = this.getCommandInfo(commands[i]!);
 
       // Impedance Matching
-      if (prevProcess && prevIsSmart !== info.isSmart) {
-        const bridgeCmd = prevIsSmart ? 'lower' : 'lift';
-        const bridgeInfo = this.getCommandInfo(bridgeCmd);
-        const bridgeProc = spawn(bridgeInfo.fullPath, [], {
+      if (prevProcess && prevIsNewPipe !== info.isNewPipe) {
+        const adapterName = prevIsNewPipe ? 'lower' : 'lift';
+        const adapterPath = this.getAdapterPath(adapterName);
+        const bridgeProc = spawn('node', [adapterPath], {
           stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
           env,
           ...spawnOpts,
@@ -217,7 +253,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
         }
         prevProcess = bridgeProc;
         processes.push(bridgeProc);
-        commandNames.push(`[${bridgeCmd}]`);
+        commandNames.push(`[${adapterName}]`);
       }
 
       const isRealLast = i === commands.length - 1;
@@ -235,13 +271,13 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
       processes.push(proc);
       commandNames.push(commands[i]!);
       prevProcess = proc;
-      prevIsSmart = info.isSmart;
+      prevIsNewPipe = info.isNewPipe;
     }
 
     // If the pipeline is smart, append lower to get text output
-    if (prevIsSmart) {
-      const lowerInfo = this.getCommandInfo('lower');
-      const lowerProc = spawn(lowerInfo.fullPath, [], {
+    if (prevIsNewPipe) {
+      const lowerPath = this.getAdapterPath('lower');
+      const lowerProc = spawn('node', [lowerPath], {
         stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
         env,
         ...spawnOpts,
@@ -258,11 +294,16 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
     for (let i = 0; i < processes.length; i++) {
       const signalPipe = processes[i]!.stdio[3] as any;
       if (signalPipe) {
+        signalPipe.on('error', () => {});
         signalPipe.on('data', (chunk: Buffer) => {
           const msg = chunk.toString().trim();
           if (msg) stageSignals[i]!.push(msg);
-          if (i > 0 && processes[i-1]!.stdio[3]) (processes[i-1]!.stdio[3] as any).write(chunk);
-          if (i < processes.length - 1 && processes[i+1]!.stdio[3]) (processes[i+1]!.stdio[3] as any).write(chunk);
+          if (i > 0 && processes[i-1]!.stdio[3]) {
+            try { (processes[i-1]!.stdio[3] as any).write(chunk); } catch {}
+          }
+          if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
+            try { (processes[i+1]!.stdio[3] as any).write(chunk); } catch {}
+          }
         });
       }
     }

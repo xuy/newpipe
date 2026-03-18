@@ -1,16 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SHELL_BIN = `NEWPIPE_PATH=${path.join(__dirname, '../dist/bin')} node --no-warnings --loader ts-node/esm ${path.join(__dirname, '../src/index.ts')}`;
+const projectRoot = process.cwd();
+const SHELL_BIN = `NEWPIPE_PATH=${path.join(projectRoot, 'dist/src/commands')} node --no-warnings ${path.join(projectRoot, 'dist/src/index.js')}`;
 
 describe('NewPipe North Star', () => {
   it('should show help information', () => {
     const output = execSync(`${SHELL_BIN} help`).toString();
     expect(output).toContain('NewPipe');
-    expect(output).toContain('Commands:');
+    expect(output).toContain('Builtins:');
   });
 
   it('should show about information', () => {
@@ -44,5 +43,13 @@ describe('NewPipe North Star', () => {
   it('should read plain text file with cat as line records', () => {
     const output = execSync(`${SHELL_BIN} "cat tsconfig.json | grep esnext"`).toString();
     expect(output).toContain('esnext');
+  });
+
+  it('should run doctor and report healthy', () => {
+    const output = execSync(`${SHELL_BIN} doctor`).toString();
+    expect(output).toContain('Checking NEWPIPE_PATH');
+    expect(output).toContain('Checking protocol compliance');
+    expect(output).toContain('Checking adapters');
+    expect(output).toContain('looks good');
   });
 });
