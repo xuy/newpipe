@@ -60,6 +60,8 @@ export async function cat(filePath: string) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { handleHelp } = await import('../utils/help.js');
+  if (handleHelp({ name: 'cat', summary: 'read files as typed records', usage: 'cat <file>', signals: ['HELO', 'ACK'] })) process.exit(0);
   const file = process.argv[2];
   if (!file) { process.exit(1); }
   cat(file);

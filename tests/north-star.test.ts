@@ -48,8 +48,14 @@ describe('NewPipe North Star', () => {
   it('should run doctor and report healthy', () => {
     const output = execSync(`${SHELL_BIN} doctor`).toString();
     expect(output).toContain('Checking NEWPIPE_PATH');
-    expect(output).toContain('Checking protocol compliance');
     expect(output).toContain('Checking adapters');
+    expect(output).toContain('looks good');
+  });
+
+  it('should run doctor --probe and verify protocol compliance', () => {
+    const output = execSync(`${SHELL_BIN} "doctor --probe"`, { timeout: 30000 }).toString();
+    expect(output).toContain('Probing protocol compliance');
+    expect(output).toContain('newpipe/1');
     expect(output).toContain('looks good');
   });
 });

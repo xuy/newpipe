@@ -38,6 +38,8 @@ export function jq(selector: string) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { handleHelp } = await import('../utils/help.js');
+  if (handleHelp({ name: 'jq', summary: 'extract fields from JSON records', usage: 'jq <selector>', signals: ['HELO', 'ACK'] })) process.exit(0);
   const selector = process.argv[2] || '.';
   jq(selector);
 }
