@@ -69,7 +69,25 @@ Design: a signal extension registry. Core signals stay frozen. Commands advertis
 
 ---
 
-## 6. Visual Pipeline Builder
+## 6. Wire Format Extensibility — Keep the Frame, Evolve the Semantics
+
+The data plane wire format is `[4 bytes][payload]`. This should never change. But those 4 bytes are a 32-bit word — there are bits to spare.
+
+Today all 32 bits encode payload length, giving a ~4GB max frame. In the future, the upper bits could carry frame metadata (chunked flag, frame type, compression hint) while the lower bits remain the length. The wire format stays the same `[4 bytes][payload]` — readers that don't understand the new bits just see slightly smaller max frames.
+
+More importantly, the control plane (FD 3) is the real extensibility layer. If two stages need chunked transfer for giant payloads, they negotiate it:
+
+```json
+{"type": "NEGOTIATE", "chunked": true}
+```
+
+Then they reinterpret the same `[4 bytes][payload]` frames as chunks of a larger logical record. The data plane format doesn't change. Stages that didn't negotiate chunking see normal frames.
+
+**Design principle:** semantics live on FD 3, not in the wire format. The 4-byte header is a stable transport primitive. The control plane gives it meaning. This keeps the protocol simple for basic use and infinitely extensible for advanced use — without breaking backward compatibility.
+
+---
+
+## 7. Visual Pipeline Builder
 
 A pipeline of typed, contract-advertising stages is a node graph. Each command is a node with typed ports. The HELO handshake *is* the wiring validation.
 
@@ -83,7 +101,7 @@ A web UI or VS Code extension where you:
 
 ---
 
-## 7. The Control Plane as Conversation
+## 8. The Control Plane as Conversation
 
 Push the control plane toward contextual intelligence. An agent orchestrating a pipeline could whisper metadata to tools:
 
@@ -95,7 +113,7 @@ A smart `grep` receiving this context could switch from literal matching to sema
 
 ---
 
-## 8. Runtime Healing and Hot-Swap
+## 9. Runtime Healing and Hot-Swap
 
 Because control flow is separated from data flow:
 
@@ -109,7 +127,7 @@ This is live-patching for data pipelines. Debug a running pipeline, identify the
 
 ---
 
-## 9. Distributed Pipelines — NewPipe over the Network
+## 10. Distributed Pipelines — NewPipe over the Network
 
 If a pipe segment is just "something that speaks three planes on three FDs," the transport can change without changing the protocol:
 
@@ -125,7 +143,7 @@ pcat huge.parquet@gpu-box | transform | view   # heavy lifting runs remotely
 
 ---
 
-## 10. A Package Ecosystem
+## 11. A Package Ecosystem
 
 Smart commands are just executables that speak the protocol. That's a package:
 
