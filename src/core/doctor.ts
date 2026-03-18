@@ -2,6 +2,7 @@ import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { discoverCommands } from './Shell.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -19,28 +20,6 @@ function printResult(r: CheckResult) {
   const icon = r.ok ? '\x1b[32m✓\x1b[0m' : '\x1b[31m✗\x1b[0m';
   const line = r.detail ? `${icon} ${r.label}  ${r.detail}` : `${icon} ${r.label}`;
   console.log(`  ${line}`);
-}
-
-function discoverCommands(searchDirs: string[]): { name: string; fullPath: string }[] {
-  const commands: { name: string; fullPath: string }[] = [];
-  const seen = new Set<string>();
-
-  for (const dir of searchDirs) {
-    if (!fs.existsSync(dir)) continue;
-    for (const entry of fs.readdirSync(dir)) {
-      if (entry.startsWith('.') || entry.endsWith('.map') || entry.endsWith('.d.ts')) continue;
-      const fullPath = path.join(dir, entry);
-      const stat = fs.statSync(fullPath);
-      if (!stat.isFile()) continue;
-      const name = entry.replace(/\.(js|py|rs)$/, '');
-      if (!seen.has(name)) {
-        seen.add(name);
-        commands.push({ name, fullPath });
-      }
-    }
-  }
-
-  return commands.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function probeCommand(cmdPath: string): CheckResult {

@@ -14,6 +14,14 @@ export async function tree(dirPath: string = '.', depth: number = 0, maxDepth: n
   const signalPlane = new SignalPlane();
   let isPaused = false;
   let isStopped = false;
+  let started = false;
+
+  const startProducing = async () => {
+    if (started) return;
+    started = true;
+    await emitTree(dirPath, depth);
+    setTimeout(() => process.exit(0), 100);
+  };
 
   const emitTree = async (currentPath: string, currentDepth: number) => {
     if (currentDepth > maxDepth || isStopped) return;
@@ -36,7 +44,7 @@ export async function tree(dirPath: string = '.', depth: number = 0, maxDepth: n
 
   signalPlane.onSignal((signal) => {
     if (signal.type === SignalType.ACK) {
-      emitTree(dirPath, depth).finally(() => setTimeout(() => process.exit(0), 100));
+      startProducing();
     } else if (signal.type === SignalType.PAUSE) {
       isPaused = true;
     } else if (signal.type === SignalType.RESUME) {
@@ -47,7 +55,7 @@ export async function tree(dirPath: string = '.', depth: number = 0, maxDepth: n
   });
 
   signalPlane.send({ type: SignalType.HELO, mimeType: 'application/json' });
-  setTimeout(() => emitTree(dirPath, depth).finally(() => setTimeout(() => process.exit(0), 100)), 1000);
+  setTimeout(() => startProducing(), 1000);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

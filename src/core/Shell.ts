@@ -28,6 +28,25 @@ interface CommandInfo {
   isNewPipe: boolean;
 }
 
+export function discoverCommands(searchDirs: string[]): { name: string; fullPath: string }[] {
+  const commands: { name: string; fullPath: string }[] = [];
+  const seen = new Set<string>();
+  for (const dir of searchDirs) {
+    if (!fs.existsSync(dir)) continue;
+    for (const entry of fs.readdirSync(dir)) {
+      if (entry.startsWith('.') || entry.endsWith('.map') || entry.endsWith('.d.ts')) continue;
+      const fullPath = path.join(dir, entry);
+      if (!fs.statSync(fullPath).isFile()) continue;
+      const name = entry.replace(/\.(js|py|rs)$/, '');
+      if (!seen.has(name)) {
+        seen.add(name);
+        commands.push({ name, fullPath });
+      }
+    }
+  }
+  return commands.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export class Shell {
   private builtins: Record<string, (args: string[]) => void | Promise<void>> = {
     help: () => {
@@ -47,7 +66,7 @@ Try: ls | head 2, cat data.json | grep pattern, doctor
       console.log(`
 Rethinking Unix Pipes for Agents
 --------------------------------
-The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
+The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
 1. Control Flow Signaling
 2. Record-based Framing (Orthogonal Planes)
       `);
@@ -72,22 +91,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
   }
 
   discoverCommands(): { name: string; fullPath: string }[] {
-    const commands: { name: string; fullPath: string }[] = [];
-    const seen = new Set<string>();
-    for (const dir of this.getSearchDirs()) {
-      if (!fs.existsSync(dir)) continue;
-      for (const entry of fs.readdirSync(dir)) {
-        if (entry.startsWith('.') || entry.endsWith('.map') || entry.endsWith('.d.ts')) continue;
-        const fullPath = path.join(dir, entry);
-        if (!fs.statSync(fullPath).isFile()) continue;
-        const name = entry.replace(/\.(js|py|rs)$/, '');
-        if (!seen.has(name)) {
-          seen.add(name);
-          commands.push({ name, fullPath });
-        }
-      }
-    }
-    return commands.sort((a, b) => a.name.localeCompare(b.name));
+    return discoverCommands(this.getSearchDirs());
   }
 
   private getCommandInfo(part: string): CommandInfo {
@@ -159,7 +163,11 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
       ];
 
       const proc = spawn(info.fullPath, info.args, { stdio, env });
-      if (prevProcess) prevProcess.stdout!.pipe(proc.stdin!);
+      if (prevProcess) {
+        prevProcess.stdout!.on('error', () => {});
+        proc.stdin!.on('error', () => {});
+        prevProcess.stdout!.pipe(proc.stdin!);
+      }
 
       processes.push(proc);
       prevProcess = proc;
@@ -170,6 +178,8 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
     if (prevIsNewPipe && !isViewPresent) {
       const view = this.getCommandInfo('view');
       const viewProc = spawn(view.fullPath, [], { stdio: ['pipe', 'inherit', 'inherit', 'pipe'], env });
+      prevProcess!.stdout!.on('error', () => {});
+      viewProc.stdin!.on('error', () => {});
       prevProcess!.stdout!.pipe(viewProc.stdin!);
       processes.push(viewProc);
     }

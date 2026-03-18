@@ -11,8 +11,11 @@ handleEpipe();
 
 export async function bcat(filePath: string) {
   const signalPlane = new SignalPlane();
+  let started = false;
 
   const startProducing = () => {
+    if (started) return;
+    started = true;
     try {
       const fileStream = fs.createReadStream(filePath);
       fileStream.on('data', (chunk) => {

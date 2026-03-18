@@ -3,8 +3,11 @@
 import { fileURLToPath } from 'url';
 import { SmartPipe } from '../core/SmartPipe.js';
 import { type Frame } from '../core/Frame.js';
+import { handleEpipe } from '../utils/epipe.js';
 import { SignalPlane } from '../core/SignalPlane.js';
 import { SignalType } from '../core/Signal.js';
+
+handleEpipe();
 
 export function view() {
   const pipe = new SmartPipe();
