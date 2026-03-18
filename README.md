@@ -14,11 +14,11 @@ cat model.safetensors | grep "layer" | wc -l      # nonsense result
 # No record boundaries — where does one record end and the next begin?
 cat data.parquet | head -5                         # 5 lines of binary garbage
 
-# Pipeline is slow — is it the producer? The consumer? No way to tell.
-fast-producer | slow-consumer                      # just hangs. which one? good luck.
+# Pipeline stalls — is it the producer or the consumer? No way to tell.
+python generate.py | gzip -9 | aws s3 cp - s3://b  # hanging. which stage? good luck.
 
-# A stage has a bug mid-stream — you have to kill the whole pipeline and start over
-long-stream | buggy-transform | downstream         # can't swap the middle while it runs
+# A stage has a bug mid-stream — you have to kill everything and start over
+tail -f /var/log/app.log | sed 's/foo/bar/' | tee out.log  # sed wrong? kill, fix, re-run. logs lost.
 ```
 
 - **No record boundaries.** Pipes see bytes, not records. A binary payload gets split at arbitrary points.
