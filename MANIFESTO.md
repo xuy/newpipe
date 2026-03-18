@@ -9,11 +9,13 @@ In the era of AI Agents, the "unstructured byte stream" has become a bottleneck.
 **NewPipe is the rebellion against the dumb straw.**
 
 ## 2. The Orthogonal Axioms (Where We Are)
-We believe that process communication must be decomposed into three strictly separated physical planes to ensure predictability and control:
+We believe that process communication and shell orchestration must be decomposed into strictly separated, orthogonal concepts to ensure predictability and control. We reject "magic" and "hacks" in favor of absolute clarity.
 
-*   **The Data Plane (FD 0/1):** Must be record-oriented and framed. No process should ever have to "guess" where a record ends. It is a high-throughput, binary-first transport.
-*   **The Control Plane (FD 3):** Must be bi-directional and out-of-band. Processes must be able to negotiate contracts (`HELO/ACK`) and exercise flow control (`PAUSE/RESUME`) without corrupting the data buffer.
+*   **The Data Plane (FD 0/1):** Must be record-oriented and framed. No process should ever have to "guess" where a record ends. It is a high-throughput, binary-first transport. `[PayloadLength(4)][PayloadBytes]`.
+*   **The Control Plane (FD 3):** Must be bi-directional and out-of-band. Processes must be able to negotiate contracts (`HELO/ACK`) and exercise flow control (`PAUSE/RESUME`) using predictable NDJSON, without corrupting the data buffer.
 *   **The Diagnostic Plane (FD 2):** Must remain human-readable. Logs, errors, and "whispers" from the process should never interfere with the machine-readable Data Plane.
+*   **The Language-Blind Kernel:** The Shell must act as a pure Switchboard. It cares only about Paths (`NEWPIPE_PATH`), not Languages (`.py`, `.ts`, `.rs`). A command's "Smartness" is defined by its willingness to speak on FD 3, not by hardcoded runners.
+*   **Explicit Context over Magic:** Environments must be explicit. A process knows it is in a Smart Shell because it receives `NEWPIPE_SIGNAL_FD=3`, bypassing arbitrary timeouts or guessed states.
 
 ## 3. The New Physics: Negotiation over Flow
 In NewPipe, a pipeline is not just a sequence of commands; it is a **Distributed State Machine**. 
