@@ -1,48 +1,55 @@
 # NewPipe 🐚
 ### Rethinking Unix Pipes for the Agentic Era
 
-NewPipe is a high-fidelity shell environment designed for AI agents. It replaces the 50-year-old "unstructured byte stream" pipe with a composition of **Three Orthogonal Planes**.
+NewPipe is a high-fidelity shell environment and protocol designed for AI agents. It replaces the 50-year-old "unstructured byte stream" pipe with a composition of **Three Orthogonal Planes**.
 
 ## 📐 The Axioms
 
 NewPipe decomposes process communication into three strictly separated physical channels:
 
 1. **The Data Plane (FD 0/1):** High-throughput, framed binary records.
-   - *Axiom:* Pure framing. No semantics. 
    - *Format:* `[PayloadLength(4)][PayloadBytes]`
 2. **The Control Plane (FD 3):** Bi-directional, text-based negotiation.
-   - *Axiom:* Out-of-band signaling. 
-   - *Format:* Newline-Delimited JSON (NDJSON).
-   - *Signals:* `HELO` (Type Offer), `ACK` (Contract established), `PAUSE/RESUME` (Backpressure).
-3. **The Diagnostic Plane (FD 2):** Human-readable logs and errors.
-   - *Axiom:* Unstructured text.
+   - *Format:* NDJSON (`{"type": "PAUSE"}\n`).
+   - *Purpose:* Type negotiation (`HELO/ACK`) and Backpressure.
+3. **The Diagnostic Plane (FD 2):** Human-readable status and logs.
 
-## ✨ Key Features
+## ✨ Why it Matters
 
-- **Bi-directional Backpressure:** A consumer can programmatically tell a producer to stop or resume over the Signal Plane, preventing kernel buffer bloat.
-- **Contract Negotiation:** Commands "claim their type over the fence" (e.g., `application/json`) before a single data byte is sent.
-- **Universal Bridging:** The shell automatically injects `lift` and `lower` stages to match impedances between "Smart" NewPipe tools and legacy Unix binaries (like Python, grep, or awk).
-- **Process Isolation:** Every command runs in its own OS process, providing a robust sandbox for agents.
+- **Polyglot & Cross-Protocol:** Mix Node.js, Python, and Legacy binaries in one pipeline. NewPipe handles the "Lowering" and "Lifting" of data automatically.
+- **Bi-directional Backpressure:** A slow consumer can programmatically pause a producer *before* buffers overflow.
+- **Modern Data First:** Native support for inspecting and synthesizing **Parquet** and **Safetensors** at the record level.
+- **Agentic Dependency Resolution:** Automatically provisions Python environments (via `uv`) based on command metadata.
+
+## 🎞 Demos
+
+The `demo/` folder contains interactive scripts showcasing the core magic:
+
+| Demo | Command | Focus |
+| :--- | :--- | :--- |
+| **01 Polyglot** | `pcat data.parquet \| grep Madison` | Cross-language record bridging. |
+| **02 Pressure** | `gen \| slow` | Visualizing the bi-directional Signal Plane. |
+| **03 Forge** | `st-gen \| to-st demo.st` | Synthesizing binary weights from metadata. |
 
 ## 🚀 Quick Start
 
 ```bash
-# Install dependencies
+# 1. Install
 npm install
 
-# Run the shell with a Smart Pipeline
+# 2. Build
+npm run build
+
+# 3. Explore
 ./newpipe "ls | head 2"
-
-# Seamless Legacy Integration (Automatic Lowering)
-./newpipe "ls | grep src"
-
-# Observe Backpressure in action
-./newpipe "ls | slow"
+./newpipe "pcat train.parquet | head 1"
 ```
 
-## 🏗 Architecture
+## 🛠 SDKs
 
-NewPipe acts as a **Kernel Switchboard**. When a pipeline is spawned, the shell wires the Data Plane linearly but acts as a central router for the Signal Plane, enabling sophisticated multi-process coordination that standard Unix pipes cannot achieve.
+NewPipe is a protocol first. Join the ecosystem in any language:
+- **Node.js:** Native integration in `src/core`.
+- **Python:** Lightweight SDK in `sdk/python/newpipe.py`.
 
 ---
 *Created by an Agent, for Agents.*
