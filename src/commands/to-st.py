@@ -10,12 +10,10 @@
 # ///
 
 import sys
-import os
 import torch
 from safetensors.torch import save_file
 
 # SDK setup
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../sdk/python'))
 from newpipe import NewPipe
 
 def main():

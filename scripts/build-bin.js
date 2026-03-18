@@ -33,10 +33,11 @@ fs.readdirSync(jsDir).filter(f => f.endsWith('.js')).forEach(f => {
 
 // 4. Create Python Bash Shims
 const pyDir = path.join(ROOT, 'src/commands');
+const pySdkPath = path.join(ROOT, 'sdk/python');
 fs.readdirSync(pyDir).filter(f => f.endsWith('.py')).forEach(f => {
   const name = path.basename(f, '.py');
   const target = path.join(pyDir, f);
-  const shim = `#!/usr/bin/env bash\nuv run "${target}" "$@"\n`;
+  const shim = `#!/usr/bin/env bash\nexport PYTHONPATH="${pySdkPath}:$PYTHONPATH"\nuv run "${target}" "$@"\n`;
   fs.writeFileSync(path.join(BIN_DIR, name), shim);
   fs.chmodSync(path.join(BIN_DIR, name), '755');
   console.log(`  [Smart] PY   -> ${name}`);

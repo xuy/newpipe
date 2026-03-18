@@ -8,6 +8,11 @@ import { Shell } from './dist/src/core/Shell.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const indexJs = path.join(__dirname, 'dist/src/index.js');
 
+// Default NEWPIPE_PATH to internal bin if not set
+if (!process.env.NEWPIPE_PATH) {
+  process.env.NEWPIPE_PATH = path.resolve(__dirname, 'dist/bin');
+}
+
 async function startRepl() {
   const shell = new Shell();
   const rl = readline.createInterface({
@@ -17,6 +22,7 @@ async function startRepl() {
   });
 
   console.log('NewPipe Shell v1.0 (REPL Mode)');
+  console.log('NEWPIPE_PATH:', process.env.NEWPIPE_PATH);
   console.log('Type "exit" or "help" to get started.\n');
 
   rl.prompt();
@@ -43,6 +49,7 @@ if (process.argv.length <= 2) {
   startRepl();
 } else {
   spawn('node', ['--no-warnings', indexJs, ...process.argv.slice(2)], {
-    stdio: 'inherit'
+    stdio: 'inherit',
+    env: process.env
   }).on('exit', (code) => process.exit(code || 0));
 }

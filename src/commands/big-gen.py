@@ -1,11 +1,9 @@
 #!/usr/bin/env -S uv run
 
 import sys
-import os
 import time
 
 # SDK setup
-sys.path.append(os.path.join(os.path.dirname(__file__), '../../sdk/python'))
 from newpipe import NewPipe
 
 def main():

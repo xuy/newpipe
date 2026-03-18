@@ -4,7 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const SHELL_BIN = `node --no-warnings --loader ts-node/esm ${path.join(__dirname, '../src/index.ts')}`;
+const SHELL_BIN = `NEWPIPE_PATH=${path.join(__dirname, '../dist/bin')} node --no-warnings --loader ts-node/esm ${path.join(__dirname, '../src/index.ts')}`;
 
 describe('NewPipe North Star', () => {
   it('should show help information', () => {
