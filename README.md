@@ -51,12 +51,22 @@ NewPipe decomposes process communication into three strictly separated physical 
 2. **Control Plane (FD 3):** Bidirectional NDJSON. Type negotiation (`HELO/ACK`), backpressure (`PAUSE/RESUME`), and lifecycle (`STOP/ERROR`).
 3. **Diagnostic Plane (FD 2):** Logs readable by both humans and agents. An operator sees status; an agent parses diagnostics to reason about the pipeline. Never interferes with the data stream.
 
-## Why It Matters
+## Why Now
 
-- **Bidirectional Backpressure.** A slow consumer sends `PAUSE` upstream — the producer halts at the source. No overflow. No data loss.
-- **Polyglot Pipelines.** Mix Node.js, Python, Rust, and legacy Unix tools in one pipeline. NewPipe auto-injects `lift`/`lower` adapters at language boundaries.
-- **Modern Data Native.** Parquet, Safetensors, and binary formats are first-class record streams — not text hacks.
-- **Language-Blind Shell.** The kernel discovers commands via `NEWPIPE_PATH`, not file extensions. A command is "smart" if it speaks on FD 3, regardless of what language it's written in.
+Three things changed since the Unix pipe was invented in 1973:
+
+### Data got big and binary
+We work with Parquet files, tensor weights, Arrow batches — not ASCII text. Piping a Parquet file through `grep` isn't filtering; it's corruption. NewPipe treats binary formats as first-class record streams. A Parquet reader and a Safetensors writer can sit in the same pipeline, with each frame self-describing its content type.
+
+### AI agents need to understand pipes
+When an LLM shells out to run a pipeline, it gets back an opaque byte stream and a return code. It can't tell which stage failed, whether the pipeline is stalled, or what the data looks like mid-stream. NewPipe's control plane gives agents typed contracts (`HELO/ACK`), backpressure signals (`PAUSE/RESUME`), and structured diagnostics — everything an agent needs to orchestrate, debug, and recover a pipeline without guessing.
+
+### LLMs belong inside the pipe
+An LLM is just another transform — records in, records out. But traditional pipes can't support it: no backpressure when the model is slow, no type negotiation for structured input, no way to signal errors without corrupting the data stream. In NewPipe, an `llm` command is a regular pipeline stage. When inference is slow, upstream PAUSEs. When the prompt needs schema context, the control plane provides it. The pipe becomes a place where classical tools and AI transforms compose freely:
+
+```bash
+pcat invoices.parquet | llm "flag suspicious entries" | grep suspicious | view
+```
 
 ## Quick Start
 
