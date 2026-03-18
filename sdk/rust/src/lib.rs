@@ -1,6 +1,7 @@
 use std::io::{self, Write, BufRead, BufReader};
 use std::os::unix::io::FromRawFd;
 use std::fs::File;
+use libc;
 use serde::{Serialize, Deserialize};
 use byteorder::{BigEndian, WriteBytesExt};
 use std::sync::{Arc, Mutex, Condvar};
@@ -25,7 +26,12 @@ pub struct SignalPlane {
 
 impl SignalPlane {
     pub fn new(fd: i32) -> Self {
-        let read_socket = unsafe { File::from_raw_fd(fd) };
+        // FD must be a bidirectional channel (socketpair from the shell).
+        // dup() so read and write have independent file descriptors —
+        // closing one won't invalidate the other.
+        let read_fd = unsafe { libc::dup(fd) };
+        assert!(read_fd >= 0, "Failed to dup signal FD");
+        let read_socket = unsafe { File::from_raw_fd(read_fd) };
         let write_socket = unsafe { File::from_raw_fd(fd) };
         let listeners: Arc<Mutex<Vec<SignalListener>>> = Arc::new(Mutex::new(Vec::new()));
         
@@ -67,7 +73,7 @@ impl SignalPlane {
 pub struct NewPipe {
     pub signals: Option<SignalPlane>,
     ready: Arc<(Mutex<bool>, Condvar)>,
-    paused: Arc<Mutex<bool>>,
+    flow: Arc<(Mutex<bool>, Condvar)>,  // (paused, condvar) — wait instead of poll
     stopped: Arc<Mutex<bool>>,
     is_smart: bool,
 }
@@ -75,7 +81,7 @@ pub struct NewPipe {
 impl NewPipe {
     pub fn new(mime_type: &str) -> Self {
         let ready = Arc::new((Mutex::new(false), Condvar::new()));
-        let paused = Arc::new(Mutex::new(false));
+        let flow = Arc::new((Mutex::new(false), Condvar::new())); // (paused, cvar)
         let stopped = Arc::new(Mutex::new(false));
 
         // Explicitly check for the signal FD via environment variable
@@ -87,7 +93,7 @@ impl NewPipe {
 
         if let Some(ref sigs) = signals {
             let ready_clone = Arc::clone(&ready);
-            let paused_clone = Arc::clone(&paused);
+            let flow_clone = Arc::clone(&flow);
             let stopped_clone = Arc::clone(&stopped);
 
             sigs.on_signal(move |sig| {
@@ -98,9 +104,22 @@ impl NewPipe {
                         *ready = true;
                         cvar.notify_all();
                     }
-                    "PAUSE" => { *paused_clone.lock().unwrap() = true; }
-                    "RESUME" => { *paused_clone.lock().unwrap() = false; }
-                    "STOP" => { *stopped_clone.lock().unwrap() = true; }
+                    "PAUSE" => {
+                        let (lock, _) = &*flow_clone;
+                        *lock.lock().unwrap() = true;
+                    }
+                    "RESUME" => {
+                        let (lock, cvar) = &*flow_clone;
+                        *lock.lock().unwrap() = false;
+                        cvar.notify_all(); // Wake blocked emitters immediately
+                    }
+                    "STOP" => {
+                        *stopped_clone.lock().unwrap() = true;
+                        // Also unblock flow so emitters can exit
+                        let (lock, cvar) = &*flow_clone;
+                        *lock.lock().unwrap() = false;
+                        cvar.notify_all();
+                    }
                     _ => {}
                 }
             });
@@ -109,7 +128,7 @@ impl NewPipe {
         let mut np = Self {
             signals,
             ready,
-            paused,
+            flow,
             stopped,
             is_smart: false,
         };
@@ -151,9 +170,14 @@ impl NewPipe {
 
     pub fn emit<T: Serialize>(&mut self, data: T) -> io::Result<()> {
         if *self.stopped.lock().unwrap() { return Ok(()); }
-        
-        while *self.paused.lock().unwrap() && !*self.stopped.lock().unwrap() {
-            thread::sleep(std::time::Duration::from_millis(50));
+
+        // Block until not paused — no polling, wakes immediately on RESUME/STOP
+        {
+            let (lock, cvar) = &*self.flow;
+            let mut paused = lock.lock().unwrap();
+            while *paused && !*self.stopped.lock().unwrap() {
+                paused = cvar.wait(paused).unwrap();
+            }
         }
 
         if self.is_smart {

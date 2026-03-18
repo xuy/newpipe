@@ -10,7 +10,12 @@ class SignalPlane:
         self.fd = fd
         self.listeners = []
         try:
-            self.read_pipe = os.fdopen(fd, 'r')
+            # FD 3 must be a bidirectional channel (socketpair).
+            # The shell creates this as a socketpair, so a single FD supports
+            # both reading and writing. We dup() to get separate file objects
+            # so closing one doesn't invalidate the other.
+            read_fd = os.dup(fd)
+            self.read_pipe = os.fdopen(read_fd, 'r')
             self.write_pipe = os.fdopen(fd, 'w')
             self.thread = threading.Thread(target=self._listen, daemon=True)
             self.thread.start()
@@ -44,12 +49,13 @@ class NewPipe:
     def __init__(self, mime_type="application/json"):
         self.signals = SignalPlane()
         self.mime_type = mime_type
-        self.paused = False
         self.stopped = False
         self._ready = threading.Event()
+        self._flow = threading.Event()
+        self._flow.set()  # Start unpaused (event is "set" = flowing)
 
         self.signals.on_signal(self._handle_signal)
-        
+
         # Initial Handshake
         self.signals.send("HELO", mime_type=self.mime_type)
 
@@ -58,21 +64,25 @@ class NewPipe:
         if t == "ACK":
             self._ready.set()
         elif t == "PAUSE":
-            self.paused = True
+            self._flow.clear()  # Block emitters until RESUME
         elif t == "RESUME":
-            self.paused = False
+            self._flow.set()    # Unblock emitters immediately
         elif t == "STOP":
             self.stopped = True
+            self._flow.set()    # Unblock so emitters can exit
+
+    @property
+    def paused(self):
+        return not self._flow.is_set()
 
     def wait_for_ready(self, timeout=1.0):
         return self._ready.wait(timeout)
 
     def emit(self, data):
         if self.stopped: return
-        
-        # Handle Backpressure
-        while self.paused and not self.stopped:
-            time.sleep(0.05)
+
+        # Handle Backpressure — blocks until RESUME, no polling
+        self._flow.wait()
 
         if isinstance(data, (dict, list)):
             payload = json.dumps(data).encode('utf-8')
