@@ -2,10 +2,47 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import readline from 'readline';
+import { Shell } from './dist/src/core/Shell.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const indexJs = path.join(__dirname, 'dist/src/index.js');
 
-spawn('node', ['--no-warnings', indexJs, ...process.argv.slice(2)], {
-  stdio: 'inherit'
-}).on('exit', (code) => process.exit(code || 0));
+async function startRepl() {
+  const shell = new Shell();
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: 'newpipe 🐚 > '
+  });
+
+  console.log('NewPipe Shell v1.0 (REPL Mode)');
+  console.log('Type "exit" or "help" to get started.\n');
+
+  rl.prompt();
+
+  rl.on('line', async (line) => {
+    const cmd = line.trim();
+    if (cmd === 'exit' || cmd === 'quit') {
+      process.exit(0);
+    }
+    if (cmd) {
+      try {
+        await shell.execute(cmd);
+      } catch (err) {
+        console.error('Execution error:', err);
+      }
+    }
+    rl.prompt();
+  }).on('close', () => {
+    process.exit(0);
+  });
+}
+
+if (process.argv.length <= 2) {
+  startRepl();
+} else {
+  spawn('node', ['--no-warnings', indexJs, ...process.argv.slice(2)], {
+    stdio: 'inherit'
+  }).on('exit', (code) => process.exit(code || 0));
+}

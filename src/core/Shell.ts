@@ -54,22 +54,67 @@ Refactored for maximum simplicity and agentic predictability.
       const parts = part.split(' ');
       const cmd = parts[0]!;
       const args = parts.slice(1);
-      let cmdPath = path.join(__dirname, '../commands', `${cmd}.ts`);
-      let isTs = true;
-      let isSmart = true;
-      if (!fs.existsSync(cmdPath)) {
-        cmdPath = path.join(__dirname, '../commands', `${cmd}.js`);
-        isTs = false;
+      
+      const searchPaths = [
+        path.join(__dirname, '../commands'), // relative to dist/src/core -> dist/src/commands
+        path.join(__dirname, '../../../src/commands') // relative to dist/src/core -> src/commands
+      ];
+
+      if (process.env.DEBUG === 'newpipe') {
+        console.error(`[Shell] Searching for ${cmd} in:`, searchPaths);
       }
-      if (!fs.existsSync(cmdPath)) {
-        isSmart = false;
+
+      let cmdPath = "";
+      let isTs = false;
+      let isPy = false;
+      let isSmart = false;
+
+      for (const p of searchPaths) {
+        const tsPath = path.join(p, `${cmd}.ts`);
+        const jsPath = path.join(p, `${cmd}.js`);
+        const pyPath = path.join(p, `${cmd}.py`);
+
+        if (fs.existsSync(tsPath)) {
+          cmdPath = tsPath;
+          isTs = true;
+          isSmart = true;
+          if (process.env.DEBUG === 'newpipe') console.error(`[Shell] Found ${cmd} as TS: ${tsPath}`);
+          break;
+        }
+        if (fs.existsSync(jsPath)) {
+          cmdPath = jsPath;
+          isSmart = true;
+          if (process.env.DEBUG === 'newpipe') console.error(`[Shell] Found ${cmd} as JS: ${jsPath}`);
+          break;
+        }
+        if (fs.existsSync(pyPath)) {
+          cmdPath = pyPath;
+          isPy = true;
+          isSmart = true;
+          if (process.env.DEBUG === 'newpipe') console.error(`[Shell] Found ${cmd} as PY: ${pyPath}`);
+          break;
+        }
+      }
+
+      if (!isSmart) {
         cmdPath = cmd;
+        if (process.env.DEBUG === 'newpipe') console.error(`[Shell] ${cmd} not found in search paths, assuming legacy.`);
       }
-      return { cmd, args, cmdPath, isTs, isSmart };
+      
+      return { cmd, args, cmdPath, isTs, isPy, isSmart };
     };
 
     const spawnProcess = (info: any, stdio: any[]) => {
       if (info.isSmart) {
+        if (info.isPy) {
+          // If uv is available, use it to ensure a robust environment
+          try {
+            // Check if uv is in path
+            return spawn('uv', ['run', info.cmdPath, ...info.args], { stdio });
+          } catch (e) {
+            return spawn('python3', [info.cmdPath, ...info.args], { stdio });
+          }
+        }
         const nodeArgs = ['--no-warnings'];
         if (info.isTs) nodeArgs.push('--loader', 'ts-node/esm');
         return spawn('node', [...nodeArgs, info.cmdPath, ...info.args], { stdio });
@@ -136,7 +181,16 @@ Refactored for maximum simplicity and agentic predictability.
     }
 
     await new Promise((resolve) => {
-      processes[processes.length - 1]?.on('exit', resolve);
+      const lastProcess = processes[processes.length - 1];
+      if (lastProcess) {
+        lastProcess.on('exit', resolve);
+        lastProcess.on('error', (err) => {
+          console.error(`Process error: ${err.message}`);
+          resolve(null);
+        });
+      } else {
+        resolve(null);
+      }
     });
   }
 }
