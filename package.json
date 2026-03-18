@@ -6,7 +6,8 @@
   "main": "index.js",
   "scripts": {
     "build": "npx tsc",
-    "test": "npx vitest run"
+    "test": "npx vitest run",
+    "mcp": "node dist/src/mcp-server.js"
   },
   "keywords": [],
   "author": "",
@@ -16,5 +17,8 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1"
   }
 }

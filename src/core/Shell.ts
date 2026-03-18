@@ -5,6 +5,21 @@ import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+export interface CaptureResult {
+  stdout: string;
+  stderr: string;
+  signals: string[];
+  exitCode: number | null;
+  timedOut: boolean;
+  stages: StageInfo[];
+}
+
+export interface StageInfo {
+  command: string;
+  exitCode: number | null;
+  signals: string[];
+}
+
 interface CommandInfo {
   cmd: string;
   args: string[];
@@ -51,6 +66,11 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
       const fullPath = path.resolve(dir, cmd!);
       if (fs.existsSync(fullPath)) {
         return { cmd: cmd!, args, fullPath, isSmart: true };
+      }
+      // Also try with .js extension (for compiled TypeScript commands)
+      const jsPath = fullPath + '.js';
+      if (fs.existsSync(jsPath)) {
+        return { cmd: cmd!, args, fullPath: jsPath, isSmart: true };
       }
     }
 
@@ -139,5 +159,176 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
       if (last) { last.on('exit', resolve); last.on('error', resolve); }
       else resolve(null);
     });
+  }
+
+  async executeCapture(commandLine: string, options?: { timeoutMs?: number; cwd?: string }): Promise<CaptureResult> {
+    const timeoutMs = options?.timeoutMs ?? 30000;
+    const pipeParts = commandLine.split('|').map(s => s.trim());
+
+    // Builtins handling — capture console.log output
+    if (pipeParts.length === 1) {
+      const parts = pipeParts[0]?.split(' ') ?? [];
+      const cmd = parts[0];
+      if (cmd && this.builtins[cmd]) {
+        const chunks: string[] = [];
+        const origLog = console.log;
+        console.log = (...args: any[]) => { chunks.push(args.join(' ')); };
+        this.builtins[cmd]!();
+        console.log = origLog;
+        return {
+          stdout: chunks.join('\n'),
+          stderr: '',
+          signals: [],
+          exitCode: 0,
+          timedOut: false,
+          stages: [{ command: cmd, exitCode: 0, signals: [] }],
+        };
+      }
+    }
+
+    const commands = [...pipeParts];
+    // In capture mode, never auto-append view — we want raw data
+    let processes: ChildProcess[] = [];
+    let commandNames: string[] = [];
+    let prevProcess: ChildProcess | null = null;
+    let prevIsSmart = false;
+
+    const env = {
+      ...process.env,
+      NEWPIPE_SIGNAL_FD: '3',
+      ...(options?.cwd ? { PWD: options.cwd } : {}),
+    };
+    const spawnOpts = options?.cwd ? { cwd: options.cwd } : {};
+
+    for (let i = 0; i < commands.length; i++) {
+      const info = this.getCommandInfo(commands[i]!);
+
+      // Impedance Matching
+      if (prevProcess && prevIsSmart !== info.isSmart) {
+        const bridgeCmd = prevIsSmart ? 'lower' : 'lift';
+        const bridgeInfo = this.getCommandInfo(bridgeCmd);
+        const bridgeProc = spawn(bridgeInfo.fullPath, [], {
+          stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+          env,
+          ...spawnOpts,
+        });
+        if (prevProcess.stdout && bridgeProc.stdin) {
+          prevProcess.stdout.pipe(bridgeProc.stdin);
+        }
+        prevProcess = bridgeProc;
+        processes.push(bridgeProc);
+        commandNames.push(`[${bridgeCmd}]`);
+      }
+
+      const isRealLast = i === commands.length - 1;
+
+      const stdio: any[] = [
+        prevProcess ? 'pipe' : 'pipe',
+        'pipe',
+        'pipe',
+        'pipe',
+      ];
+
+      const proc = spawn(info.fullPath, info.args, { stdio, env, ...spawnOpts });
+      if (prevProcess) prevProcess.stdout!.pipe(proc.stdin!);
+
+      processes.push(proc);
+      commandNames.push(commands[i]!);
+      prevProcess = proc;
+      prevIsSmart = info.isSmart;
+    }
+
+    // If the pipeline is smart, append lower to get text output
+    if (prevIsSmart) {
+      const lowerInfo = this.getCommandInfo('lower');
+      const lowerProc = spawn(lowerInfo.fullPath, [], {
+        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+        env,
+        ...spawnOpts,
+      });
+      prevProcess!.stdout!.pipe(lowerProc.stdin!);
+      processes.push(lowerProc);
+      commandNames.push('[lower]');
+    }
+
+    // Collect per-stage signals
+    const stageSignals: string[][] = processes.map(() => []);
+
+    // Switchboard: Route signals between adjacent FD 3 pipes
+    for (let i = 0; i < processes.length; i++) {
+      const signalPipe = processes[i]!.stdio[3] as any;
+      if (signalPipe) {
+        signalPipe.on('data', (chunk: Buffer) => {
+          const msg = chunk.toString().trim();
+          if (msg) stageSignals[i]!.push(msg);
+          if (i > 0 && processes[i-1]!.stdio[3]) (processes[i-1]!.stdio[3] as any).write(chunk);
+          if (i < processes.length - 1 && processes[i+1]!.stdio[3]) (processes[i+1]!.stdio[3] as any).write(chunk);
+        });
+      }
+    }
+
+    // Collect stdout and stderr from the last process
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+
+    const lastProc = processes[processes.length - 1]!;
+    lastProc.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+
+    // Collect stderr from ALL stages
+    for (const proc of processes) {
+      proc.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    }
+
+    // Close stdin of the first process (no interactive input in capture mode)
+    const firstProc = processes[0];
+    if (firstProc?.stdin && !firstProc.stdin.destroyed) {
+      firstProc.stdin.end();
+    }
+
+    // Track exit codes per stage
+    const exitCodes: (number | null)[] = processes.map(() => null);
+    for (let i = 0; i < processes.length; i++) {
+      processes[i]!.on('exit', (code) => { exitCodes[i] = code; });
+    }
+
+    // Wait for completion with timeout
+    let timedOut = false;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        timedOut = true;
+        for (const proc of processes) {
+          try { proc.kill('SIGTERM'); } catch {}
+        }
+        // Force kill after 2s grace period
+        setTimeout(() => {
+          for (const proc of processes) {
+            try { proc.kill('SIGKILL'); } catch {}
+          }
+          resolve();
+        }, 2000);
+      }, timeoutMs);
+
+      lastProc.on('exit', () => { clearTimeout(timer); resolve(); });
+      lastProc.on('error', () => { clearTimeout(timer); resolve(); });
+    });
+
+    const stdout = Buffer.concat(stdoutChunks).toString();
+    const stderr = Buffer.concat(stderrChunks).toString();
+    const allSignals = stageSignals.flat();
+
+    const stages: StageInfo[] = commandNames.map((name, i) => ({
+      command: name,
+      exitCode: exitCodes[i] ?? null,
+      signals: stageSignals[i] ?? [],
+    }));
+
+    return {
+      stdout,
+      stderr,
+      signals: allSignals,
+      exitCode: exitCodes[exitCodes.length - 1] ?? null,
+      timedOut,
+      stages,
+    };
   }
 }
