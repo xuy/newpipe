@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 import readline from 'readline';
-import { SmartPipe } from '../core/SmartPipe.js';
-import { handleEpipe } from '../utils/epipe.js';
-import { SignalPlane } from '../core/SignalPlane.js';
-import { SignalType } from '../core/Signal.js';
+import { SmartPipe } from '../SmartPipe.js';
+import { handleEpipe } from '../../utils/epipe.js';
+import { SignalPlane } from '../SignalPlane.js';
+import { SignalType } from '../Signal.js';
 
 handleEpipe();
 
