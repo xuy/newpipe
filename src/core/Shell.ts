@@ -67,12 +67,14 @@ Refactored for maximum simplicity and agentic predictability.
       let cmdPath = "";
       let isTs = false;
       let isPy = false;
+      let isRs = false;
       let isSmart = false;
 
       for (const p of searchPaths) {
         const tsPath = path.join(p, `${cmd}.ts`);
         const jsPath = path.join(p, `${cmd}.js`);
         const pyPath = path.join(p, `${cmd}.py`);
+        const rsPath = path.join(p, `${cmd}.rs`);
 
         if (fs.existsSync(tsPath)) {
           cmdPath = tsPath;
@@ -94,6 +96,13 @@ Refactored for maximum simplicity and agentic predictability.
           if (process.env.DEBUG === 'newpipe') console.error(`[Shell] Found ${cmd} as PY: ${pyPath}`);
           break;
         }
+        if (fs.existsSync(rsPath)) {
+          cmdPath = rsPath;
+          isRs = true;
+          isSmart = true;
+          if (process.env.DEBUG === 'newpipe') console.error(`[Shell] Found ${cmd} as RS: ${rsPath}`);
+          break;
+        }
       }
 
       if (!isSmart) {
@@ -101,7 +110,7 @@ Refactored for maximum simplicity and agentic predictability.
         if (process.env.DEBUG === 'newpipe') console.error(`[Shell] ${cmd} not found in search paths, assuming legacy.`);
       }
       
-      return { cmd, args, cmdPath, isTs, isPy, isSmart };
+      return { cmd, args, cmdPath, isTs, isPy, isRs, isSmart };
     };
 
     const spawnProcess = (info: any, stdio: any[]) => {
@@ -109,11 +118,18 @@ Refactored for maximum simplicity and agentic predictability.
         if (info.isPy) {
           // If uv is available, use it to ensure a robust environment
           try {
-            // Check if uv is in path
             return spawn('uv', ['run', info.cmdPath, ...info.args], { stdio });
           } catch (e) {
             return spawn('python3', [info.cmdPath, ...info.args], { stdio });
           }
+        }
+        if (info.isRs) {
+          // For Rust, we assume it's an example in sdk/rust
+          const rustSdkPath = path.join(__dirname, '../../../sdk/rust');
+          return spawn('cargo', ['run', '--quiet', '--example', info.cmd, '--', ...info.args], { 
+            stdio,
+            cwd: rustSdkPath
+          });
         }
         const nodeArgs = ['--no-warnings'];
         if (info.isTs) nodeArgs.push('--loader', 'ts-node/esm');
