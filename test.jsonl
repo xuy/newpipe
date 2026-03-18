@@ -1,0 +1,3 @@
+{"id": 1, "task": "research", "status": "done"}
+{"id": 2, "task": "implementation", "status": "in-progress"}
+{"id": 3, "task": "verification", "status": "todo"}

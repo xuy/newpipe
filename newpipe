@@ -1,0 +1,11 @@
+#!/usr/bin/env node
+import { spawn } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const indexJs = path.join(__dirname, 'dist/src/index.js');
+
+spawn('node', ['--no-warnings', indexJs, ...process.argv.slice(2)], {
+  stdio: 'inherit'
+}).on('exit', (code) => process.exit(code || 0));
