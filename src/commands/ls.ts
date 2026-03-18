@@ -14,8 +14,11 @@ export async function ls(dirPath: string = '.') {
   const signalPlane = new SignalPlane();
   let isPaused = false;
   let isStopped = false;
+  let started = false;
 
   const startProducing = async () => {
+    if (started) return;
+    started = true;
     try {
       const files = await fs.readdir(dirPath);
       for (const file of files) {
@@ -34,7 +37,6 @@ export async function ls(dirPath: string = '.') {
           mtime: stats.mtime
         };
         process.stdout.write(SmartPipe.wrap(fileRecord));
-        await new Promise(r => setTimeout(r, 10));
       }
     } catch (error: any) {
       console.error(`Error in ls: ${error.message}`);
@@ -59,9 +61,7 @@ export async function ls(dirPath: string = '.') {
   signalPlane.send({ type: SignalType.HELO, mimeType: 'application/json' });
 
   // Safety fallback
-  setTimeout(() => {
-    if (!isPaused && !isStopped) startProducing();
-  }, 1000);
+  setTimeout(() => startProducing(), 1000);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

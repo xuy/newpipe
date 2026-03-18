@@ -16,8 +16,8 @@ export function jq(selector: string) {
 
   signalPlane.onSignal((signal) => {
     if (signal.type === SignalType.HELO) {
-      signalPlane.send({ type: SignalType.HELO, mimeType: 'application/json' });
       signalPlane.send({ type: SignalType.ACK });
+      signalPlane.send({ type: SignalType.HELO, mimeType: 'application/json' });
     }
   });
 

@@ -29,6 +29,8 @@ export class SignalPlane {
         }
       });
 
+      rl.on('error', () => {});
+
       this.socket.on('error', (err) => {
         if (this.debug) console.error(`[SignalPlane] Socket error:`, err.message);
       });

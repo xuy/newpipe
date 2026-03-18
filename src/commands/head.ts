@@ -16,8 +16,8 @@ export function head(n: number = 10) {
 
   signalPlane.onSignal((signal) => {
     if (signal.type === SignalType.HELO) {
-      signalPlane.send({ type: SignalType.HELO, mimeType: signal.mimeType || 'text/plain' });
       signalPlane.send({ type: SignalType.ACK });
+      signalPlane.send({ type: SignalType.HELO, mimeType: signal.mimeType || 'text/plain' });
     }
   });
 

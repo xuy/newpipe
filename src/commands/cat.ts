@@ -13,8 +13,11 @@ handleEpipe();
 export async function cat(filePath: string) {
   const signalPlane = new SignalPlane();
   const mimeType = filePath.endsWith('.json') || filePath.endsWith('.jsonl') ? 'application/json' : 'text/plain';
+  let started = false;
 
   const startProducing = async () => {
+    if (started) return;
+    started = true;
     try {
       if (filePath.endsWith('.jsonl')) {
         const fileStream = fs.createReadStream(filePath);
