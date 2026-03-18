@@ -5,187 +5,98 @@ import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+interface CommandInfo {
+  cmd: string;
+  args: string[];
+  fullPath: string;
+  runner?: string[];
+  isSmart: boolean;
+}
+
 export class Shell {
-  private builtins: Record<string, () => void> = {
-    help: () => {
-      console.log(`
-NewPipe - Orthogonal Agentic Shell
-
-Commands: about, install, github, agent, help
-Built-ins: ls, cat, grep, head, tree, bcat
-
-Architecture:
-  FD 0/1: Data Plane (4-byte length framed)
-  FD 2:   Diagnostic Plane (Text)
-  FD 3:   Signal Plane (NDJSON)
-      `);
-    },
-    about: () => {
-      console.log(`
-NewPipe: A Composition of Orthogonal Planes.
-Refactored for maximum simplicity and agentic predictability.
-      `);
-    },
-    github: () => { console.log('https://github.com/newpipe/newpipe'); },
-    agent: () => { console.log('Status: Sandbox Orthogonality Verified.'); },
-    install: () => { console.log('Ready.'); }
+  private RUNNERS: Record<string, (p: string) => string[]> = {
+    '.ts': (p) => ['node', '--no-warnings', '--loader', 'ts-node/esm', p],
+    '.js': (p) => ['node', '--no-warnings', p],
+    '.py': (p) => ['uv', 'run', p],
+    '.rs': (p) => ['cargo', 'run', '--quiet', '--manifest-path', path.join(__dirname, '../../../sdk/rust/Cargo.toml'), '--example', path.basename(p, '.rs'), '--']
   };
 
-  async execute(commandLine: string) {
-    const pipeParts = commandLine.split('|').map(s => s.trim());
-    
-    if (pipeParts.length === 1) {
-      const parts = pipeParts[0]?.split(' ') ?? [];
-      const cmd = parts[0];
-      if (cmd && this.builtins[cmd]) {
-        this.builtins[cmd]!();
-        return;
+  private builtins: Record<string, () => void> = {
+    help: () => {
+      console.log(`NewPipe - Orthogonal Agentic Shell\nArchitecture: FD 0/1 (Data), FD 2 (Diag), FD 3 (Signal)`);
+    }
+  };
+
+  private getCommandInfo(part: string): CommandInfo {
+    const [cmd, ...args] = part.split(' ');
+    const searchPaths = [
+      path.join(__dirname, '../commands'),
+      path.join(__dirname, '../../../src/commands')
+    ];
+
+    for (const p of searchPaths) {
+      for (const ext of Object.keys(this.RUNNERS)) {
+        const fullPath = path.join(p, `${cmd}${ext}`);
+        if (fs.existsSync(fullPath)) {
+          return { cmd: cmd!, args, fullPath, runner: this.RUNNERS[ext]!(fullPath), isSmart: true };
+        }
       }
     }
 
+    return { cmd: cmd!, args, fullPath: cmd!, isSmart: false };
+  }
+
+  async execute(commandLine: string) {
+    const pipeParts = commandLine.split('|').map(s => s.trim());
+    if (pipeParts.length === 1 && this.builtins[pipeParts[0]!]) {
+      this.builtins[pipeParts[0]!]!();
+      return;
+    }
+
     const commands = [...pipeParts];
-    const isViewAlreadyPresent = commands[commands.length - 1]?.startsWith('view');
-    
+    if (commands[commands.length - 1] && !commands[commands.length - 1]?.startsWith('view')) {
+      commands.push('view');
+    }
+
     let processes: ChildProcess[] = [];
     let prevProcess: ChildProcess | null = null;
     let prevIsSmart = false;
 
-    const getCommandInfo = (part: string) => {
-      const parts = part.split(' ');
-      const cmd = parts[0]!;
-      const args = parts.slice(1);
-      
-      const searchPaths = [
-        path.join(__dirname, '../commands'), // relative to dist/src/core -> dist/src/commands
-        path.join(__dirname, '../../../src/commands') // relative to dist/src/core -> src/commands
-      ];
-
-      if (process.env.DEBUG === 'newpipe') {
-        console.error(`[Shell] Searching for ${cmd} in:`, searchPaths);
-      }
-
-      let cmdPath = "";
-      let isTs = false;
-      let isPy = false;
-      let isRs = false;
-      let isSmart = false;
-
-      for (const p of searchPaths) {
-        const tsPath = path.join(p, `${cmd}.ts`);
-        const jsPath = path.join(p, `${cmd}.js`);
-        const pyPath = path.join(p, `${cmd}.py`);
-        const rsPath = path.join(p, `${cmd}.rs`);
-
-        if (fs.existsSync(tsPath)) {
-          cmdPath = tsPath;
-          isTs = true;
-          isSmart = true;
-          if (process.env.DEBUG === 'newpipe') console.error(`[Shell] Found ${cmd} as TS: ${tsPath}`);
-          break;
-        }
-        if (fs.existsSync(jsPath)) {
-          cmdPath = jsPath;
-          isSmart = true;
-          if (process.env.DEBUG === 'newpipe') console.error(`[Shell] Found ${cmd} as JS: ${jsPath}`);
-          break;
-        }
-        if (fs.existsSync(pyPath)) {
-          cmdPath = pyPath;
-          isPy = true;
-          isSmart = true;
-          if (process.env.DEBUG === 'newpipe') console.error(`[Shell] Found ${cmd} as PY: ${pyPath}`);
-          break;
-        }
-        if (fs.existsSync(rsPath)) {
-          cmdPath = rsPath;
-          isRs = true;
-          isSmart = true;
-          if (process.env.DEBUG === 'newpipe') console.error(`[Shell] Found ${cmd} as RS: ${rsPath}`);
-          break;
-        }
-      }
-
-      if (!isSmart) {
-        cmdPath = cmd;
-        if (process.env.DEBUG === 'newpipe') console.error(`[Shell] ${cmd} not found in search paths, assuming legacy.`);
-      }
-      
-      return { cmd, args, cmdPath, isTs, isPy, isRs, isSmart };
-    };
-
-    const spawnProcess = (info: any, stdio: any[]) => {
-      if (info.isSmart) {
-        if (info.isPy) {
-          // If uv is available, use it to ensure a robust environment
-          try {
-            return spawn('uv', ['run', info.cmdPath, ...info.args], { stdio });
-          } catch (e) {
-            return spawn('python3', [info.cmdPath, ...info.args], { stdio });
-          }
-        }
-        if (info.isRs) {
-          // For Rust, we assume it's an example in sdk/rust
-          const rustSdkPath = path.join(__dirname, '../../../sdk/rust');
-          return spawn('cargo', ['run', '--quiet', '--example', info.cmd, '--', ...info.args], { 
-            stdio,
-            cwd: rustSdkPath
-          });
-        }
-        const nodeArgs = ['--no-warnings'];
-        if (info.isTs) nodeArgs.push('--loader', 'ts-node/esm');
-        return spawn('node', [...nodeArgs, info.cmdPath, ...info.args], { stdio });
-      } else {
-        return spawn(info.cmdPath, info.args, { stdio });
-      }
-    };
-
     for (let i = 0; i < commands.length; i++) {
-      const info = getCommandInfo(commands[i]!);
+      let info = this.getCommandInfo(commands[i]!);
 
-      // Impedance Matching
-      if (prevProcess && prevIsSmart && !info.isSmart) {
-        const lowerInfo = getCommandInfo('lower');
-        const lowerer = spawnProcess(lowerInfo, ['pipe', 'pipe', 'inherit', 'pipe']);
-        prevProcess.stdout!.pipe(lowerer.stdin!);
-        prevProcess = lowerer;
-        processes.push(lowerer);
-      } else if (prevProcess && !prevIsSmart && info.isSmart) {
-        const liftInfo = getCommandInfo('lift');
-        const lifter = spawnProcess(liftInfo, ['pipe', 'pipe', 'inherit', 'pipe']);
-        prevProcess.stdout!.pipe(lifter.stdin!);
-        prevProcess = lifter;
-        processes.push(lifter);
+      // Impedance Matching (Inject lower/lift if boundary crossed)
+      if (prevProcess && prevIsSmart !== info.isSmart) {
+        const bridgeCmd = prevIsSmart ? 'lower' : 'lift';
+        const bridgeInfo = this.getCommandInfo(bridgeCmd);
+        const bridgeProc = spawn(bridgeInfo.runner![0]!, [...bridgeInfo.runner!.slice(1)], { stdio: ['pipe', 'pipe', 'inherit', 'pipe'] });
+        prevProcess.stdout!.pipe(bridgeProc.stdin!);
+        prevProcess = bridgeProc;
+        processes.push(bridgeProc);
       }
 
       const isRealLast = i === commands.length - 1;
-      const isSmartAndNeedsView = info.isSmart && isRealLast && !isViewAlreadyPresent && info.cmd !== 'view';
+      const isSmartAndNeedsView = info.isSmart && isRealLast && !commands[commands.length-1]?.startsWith('view');
 
       const stdio: any[] = [
         prevProcess ? 'pipe' : 'inherit',
         (isRealLast && !isSmartAndNeedsView) ? 'inherit' : 'pipe',
         'inherit',
-        'pipe', // FD 3: Signal Plane
+        'pipe' // FD 3: Signal Plane
       ];
 
-      const currentProcess = spawnProcess(info, stdio);
-      if (prevProcess && currentProcess.stdin) {
-        prevProcess.stdout!.pipe(currentProcess.stdin);
-      }
+      const spawnArgs = info.runner ? [...info.runner.slice(1), ...info.args] : info.args;
+      const spawnCmd = info.runner ? info.runner[0]! : info.fullPath;
+
+      const currentProcess = spawn(spawnCmd, spawnArgs, { stdio });
+      if (prevProcess && currentProcess.stdin) prevProcess.stdout!.pipe(currentProcess.stdin);
 
       processes.push(currentProcess);
       prevProcess = currentProcess;
       prevIsSmart = info.isSmart;
     }
 
-    if (prevIsSmart && !isViewAlreadyPresent) {
-      const viewInfo = getCommandInfo('view');
-      const viewProcess = spawnProcess(viewInfo, ['pipe', 'inherit', 'inherit', 'pipe']);
-      prevProcess!.stdout!.pipe(viewProcess.stdin!);
-      processes.push(viewProcess);
-    }
-
     // Switchboard Routing
-    const debug = process.env.DEBUG === 'newpipe';
     for (let i = 0; i < processes.length; i++) {
       const p = processes[i]!;
       if (p.stdio[3]) {
@@ -197,16 +108,9 @@ Refactored for maximum simplicity and agentic predictability.
     }
 
     await new Promise((resolve) => {
-      const lastProcess = processes[processes.length - 1];
-      if (lastProcess) {
-        lastProcess.on('exit', resolve);
-        lastProcess.on('error', (err) => {
-          console.error(`Process error: ${err.message}`);
-          resolve(null);
-        });
-      } else {
-        resolve(null);
-      }
+      const last = processes[processes.length - 1];
+      if (last) { last.on('exit', resolve); last.on('error', resolve); }
+      else resolve(null);
     });
   }
 }
