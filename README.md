@@ -5,17 +5,22 @@
 
 ## The Problem
 
-Unix pipes are silent, passive, and brittle:
+Unix pipes treat everything as an undifferentiated byte stream. This breaks in predictable ways:
 
-```
-# Traditional pipe — what could go wrong?
-fast-producer | slow-consumer
+```bash
+# Binary data hits a text tool — silently corrupted
+cat model.safetensors | grep "layer" | wc -l    # nonsense result
+
+# Multi-line JSON piped through line-oriented tools — records split apart
+cat events.jsonl | sort | uniq                   # breaks on any record > 1 line
+
+# No record boundaries — where does one record end and the next begin?
+cat data.parquet | head -5                       # 5 lines of binary garbage
 ```
 
-- **No backpressure.** The producer floods the buffer. Data is silently lost.
-- **No types.** Everything is bytes. A binary record gets mangled by a text tool.
-- **No negotiation.** The producer has no idea what the consumer expects.
-- **No cross-language composability.** Mixing Python, Rust, and shell tools requires glue scripts and prayer.
+- **No record boundaries.** Pipes see bytes, not records. A binary payload gets split at arbitrary points.
+- **No type awareness.** A Parquet file piped through `grep` isn't filtering records — it's corrupting a binary format.
+- **No negotiation.** The producer has no idea what the consumer expects, and no way to ask.
 
 ## The Three Planes
 
