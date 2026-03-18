@@ -47,7 +47,7 @@ NewPipe decomposes process communication into three strictly separated physical 
             +------------------+                +------------------+
 ```
 
-1. **Data Plane (FD 0/1):** Framed binary records — `[PayloadLength(4)][PayloadBytes]`. No process ever has to guess where a record ends.
+1. **Data Plane (FD 0/1):** A continuous stream of length-prefixed frames — `[len(4)][payload][len(4)][payload]...`. Each record is self-delimiting. No process ever has to guess where one ends and the next begins.
 2. **Control Plane (FD 3):** Bidirectional NDJSON. Type negotiation (`HELO/ACK`), backpressure (`PAUSE/RESUME`), and lifecycle (`STOP/ERROR`).
 3. **Diagnostic Plane (FD 2):** Human-readable logs. Never interferes with the data stream.
 
