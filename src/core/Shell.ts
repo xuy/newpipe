@@ -3,8 +3,76 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { doctor } from './doctor.js';
+import { UPSTREAM_SIGNALS, DOWNSTREAM_SIGNALS, type SignalMessage } from './Signal.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Split a command line on unquoted, single `|` characters.
+ * Respects single quotes, double quotes, and backslash escapes.
+ * Does NOT split on `||` (logical OR).
+ */
+export function splitPipeline(commandLine: string): string[] {
+  const stages: string[] = [];
+  let current = '';
+  let i = 0;
+  const len = commandLine.length;
+
+  while (i < len) {
+    const ch = commandLine[i]!;
+
+    if (ch === '\\' && i + 1 < len) {
+      // Escaped character — consume both
+      current += ch + commandLine[i + 1];
+      i += 2;
+      continue;
+    }
+
+    if (ch === "'" || ch === '"') {
+      // Consume entire quoted string
+      const quote = ch;
+      current += ch;
+      i++;
+      while (i < len && commandLine[i] !== quote) {
+        if (commandLine[i] === '\\' && quote === '"' && i + 1 < len) {
+          current += commandLine[i]! + commandLine[i + 1];
+          i += 2;
+        } else {
+          current += commandLine[i];
+          i++;
+        }
+      }
+      if (i < len) {
+        current += commandLine[i]; // closing quote
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === '|') {
+      // Check for || (logical OR) — keep as part of current stage
+      if (i + 1 < len && commandLine[i + 1] === '|') {
+        current += '||';
+        i += 2;
+        continue;
+      }
+      // Single pipe — split here
+      stages.push(current.trim());
+      current = '';
+      i++;
+      continue;
+    }
+
+    current += ch;
+    i++;
+  }
+
+  if (current.trim()) {
+    stages.push(current.trim());
+  }
+
+  return stages;
+}
 
 export interface CaptureResult {
   stdout: string;
@@ -114,7 +182,7 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
   }
 
   async execute(commandLine: string) {
-    const pipeParts = commandLine.split('|').map(s => s.trim());
+    const pipeParts = splitPipeline(commandLine);
     
     // Builtins handling
     if (pipeParts.length === 1) {
@@ -184,17 +252,48 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
       processes.push(viewProc);
     }
 
-    // Switchboard: Route signals between adjacent FD 3 pipes
+    // Switchboard: Route signals directionally between adjacent stages
+    // PAUSE/RESUME/ACK/STOP flow upstream (consumer→producer, i→i-1)
+    // HELO/ERROR flow downstream (producer→consumer, i→i+1)
     for (let i = 0; i < processes.length; i++) {
       const signalPipe = processes[i]!.stdio[3] as any;
       if (signalPipe) {
         signalPipe.on('error', () => {});
         signalPipe.on('data', (chunk: Buffer) => {
-          if (i > 0 && processes[i-1]!.stdio[3]) {
-            try { (processes[i-1]!.stdio[3] as any).write(chunk); } catch {}
-          }
-          if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
-            try { (processes[i+1]!.stdio[3] as any).write(chunk); } catch {}
+          for (const line of chunk.toString().split('\n')) {
+            if (!line.trim()) continue;
+            try {
+              const signal: SignalMessage = JSON.parse(line);
+              const msg = line + '\n';
+              if (UPSTREAM_SIGNALS.has(signal.type as any)) {
+                // Route upstream: toward producer (i-1)
+                if (i > 0 && processes[i-1]!.stdio[3]) {
+                  try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+                }
+              } else if (DOWNSTREAM_SIGNALS.has(signal.type as any)) {
+                // Route downstream: toward consumer (i+1)
+                if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
+                  try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+                }
+              } else {
+                // Unknown signal: route both directions (forward-compat)
+                if (i > 0 && processes[i-1]!.stdio[3]) {
+                  try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+                }
+                if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
+                  try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+                }
+              }
+            } catch {
+              // Unparseable signal: broadcast (backward-compat)
+              const msg = line + '\n';
+              if (i > 0 && processes[i-1]!.stdio[3]) {
+                try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+              }
+              if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
+                try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+              }
+            }
           }
         });
       }
@@ -209,7 +308,7 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
 
   async executeCapture(commandLine: string, options?: { timeoutMs?: number; cwd?: string }): Promise<CaptureResult> {
     const timeoutMs = options?.timeoutMs ?? 30000;
-    const pipeParts = commandLine.split('|').map(s => s.trim());
+    const pipeParts = splitPipeline(commandLine);
 
     // Builtins handling — capture console.log output
     if (pipeParts.length === 1) {
@@ -300,19 +399,43 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
     // Collect per-stage signals
     const stageSignals: string[][] = processes.map(() => []);
 
-    // Switchboard: Route signals between adjacent FD 3 pipes
+    // Switchboard: Route signals directionally between adjacent stages
     for (let i = 0; i < processes.length; i++) {
       const signalPipe = processes[i]!.stdio[3] as any;
       if (signalPipe) {
         signalPipe.on('error', () => {});
         signalPipe.on('data', (chunk: Buffer) => {
-          const msg = chunk.toString().trim();
-          if (msg) stageSignals[i]!.push(msg);
-          if (i > 0 && processes[i-1]!.stdio[3]) {
-            try { (processes[i-1]!.stdio[3] as any).write(chunk); } catch {}
-          }
-          if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
-            try { (processes[i+1]!.stdio[3] as any).write(chunk); } catch {}
+          for (const line of chunk.toString().split('\n')) {
+            if (!line.trim()) continue;
+            stageSignals[i]!.push(line.trim());
+            try {
+              const signal: SignalMessage = JSON.parse(line);
+              const msg = line + '\n';
+              if (UPSTREAM_SIGNALS.has(signal.type as any)) {
+                if (i > 0 && processes[i-1]!.stdio[3]) {
+                  try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+                }
+              } else if (DOWNSTREAM_SIGNALS.has(signal.type as any)) {
+                if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
+                  try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+                }
+              } else {
+                if (i > 0 && processes[i-1]!.stdio[3]) {
+                  try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+                }
+                if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
+                  try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+                }
+              }
+            } catch {
+              const msg = line + '\n';
+              if (i > 0 && processes[i-1]!.stdio[3]) {
+                try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+              }
+              if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
+                try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+              }
+            }
           }
         });
       }
