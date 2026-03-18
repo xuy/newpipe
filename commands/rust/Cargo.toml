@@ -1,0 +1,42 @@
+[package]
+name = "newpipe-commands"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+newpipe = { path = "../../sdk/rust" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[[bin]]
+name = "rgen"
+path = "src/bin/rgen.rs"
+
+# Future ETL commands — uncomment as implemented:
+# [[bin]]
+# name = "csvcat"
+# path = "src/bin/csvcat.rs"
+#
+# [[bin]]
+# name = "where"
+# path = "src/bin/where.rs"
+#
+# [[bin]]
+# name = "select"
+# path = "src/bin/select.rs"
+#
+# [[bin]]
+# name = "groupby"
+# path = "src/bin/groupby.rs"
+#
+# [[bin]]
+# name = "sort"
+# path = "src/bin/sort.rs"
+#
+# [[bin]]
+# name = "count"
+# path = "src/bin/count.rs"
+#
+# [[bin]]
+# name = "sample"
+# path = "src/bin/sample.rs"

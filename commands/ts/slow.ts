@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { fileURLToPath } from 'url';
-import { SmartPipe } from '../core/SmartPipe.js';
-import { type Frame } from '../core/Frame.js';
-import { SignalPlane } from '../core/SignalPlane.js';
-import { SignalType } from '../core/Signal.js';
-import { handleEpipe } from '../utils/epipe.js';
+import { SmartPipe } from '../../src/core/SmartPipe.js';
+import { type Frame } from '../../src/core/Frame.js';
+import { SignalPlane } from '../../src/core/SignalPlane.js';
+import { SignalType } from '../../src/core/Signal.js';
+import { handleEpipe } from '../../src/utils/epipe.js';
 
 handleEpipe();
 
@@ -41,7 +41,7 @@ export async function slow() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const { handleHelp } = await import('../utils/help.js');
+  const { handleHelp } = await import('../../src/utils/help.js');
   if (handleHelp({ name: 'slow', summary: 'backpressure demo consumer', usage: 'slow', signals: ['HELO', 'ACK', 'PAUSE', 'RESUME'] })) process.exit(0);
   slow();
 }

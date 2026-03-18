@@ -153,7 +153,7 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
   }
 
   getSearchDirs(): string[] {
-    const internalBin = path.join(__dirname, '../../bin');
+    const internalBin = path.join(__dirname, '../../bin');  // dist/bin after build
     const npPath = process.env.NEWPIPE_PATH || internalBin;
     return npPath.split(path.delimiter);
   }

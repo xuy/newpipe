@@ -25,7 +25,7 @@ function printResult(r: CheckResult) {
 function probeCommand(cmdPath: string): CheckResult {
   const name = path.basename(cmdPath).replace(/\.(js|py|rs)$/, '');
   try {
-    const output = execSync(`NEWPIPE_SIGNAL_FD=3 node "${cmdPath}" --help 2>/dev/null`, {
+    const output = execSync(`NEWPIPE_SIGNAL_FD=3 "${cmdPath}" --help 2>/dev/null`, {
       timeout: 5000,
       encoding: 'utf-8',
     });

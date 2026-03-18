@@ -9,8 +9,9 @@ import { Shell, type CaptureResult } from './core/Shell.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Set NEWPIPE_PATH so Shell can find smart commands
+// After build, all commands (TS, Python, Rust) land in dist/bin/
 if (!process.env.NEWPIPE_PATH) {
-  process.env.NEWPIPE_PATH = path.resolve(__dirname, 'commands');
+  process.env.NEWPIPE_PATH = path.resolve(__dirname, '../bin');
 }
 
 const shell = new Shell();

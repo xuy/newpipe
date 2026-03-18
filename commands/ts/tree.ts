@@ -3,10 +3,10 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { SmartPipe } from '../core/SmartPipe.js';
-import { handleEpipe } from '../utils/epipe.js';
-import { SignalPlane } from '../core/SignalPlane.js';
-import { SignalType } from '../core/Signal.js';
+import { SmartPipe } from '../../src/core/SmartPipe.js';
+import { handleEpipe } from '../../src/utils/epipe.js';
+import { SignalPlane } from '../../src/core/SignalPlane.js';
+import { SignalType } from '../../src/core/Signal.js';
 
 handleEpipe();
 
@@ -59,7 +59,7 @@ export async function tree(dirPath: string = '.', depth: number = 0, maxDepth: n
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const { handleHelp } = await import('../utils/help.js');
+  const { handleHelp } = await import('../../src/utils/help.js');
   if (handleHelp({ name: 'tree', summary: 'recursive directory listing as records', usage: 'tree [dir]', signals: ['HELO', 'ACK', 'PAUSE', 'RESUME', 'STOP'] })) process.exit(0);
   const dir = process.argv[2] || '.';
   tree(dir);
