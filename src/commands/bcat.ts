@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { SmartPipe } from '../core/SmartPipe.js';

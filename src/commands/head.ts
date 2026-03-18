@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { fileURLToPath } from 'url';
 import { SmartPipe } from '../core/SmartPipe.js';
 import { type Frame } from '../core/Frame.js';

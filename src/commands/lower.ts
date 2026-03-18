@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { SmartPipe } from '../core/SmartPipe.js';
 import { type Frame } from '../core/Frame.js';
 import { handleEpipe } from '../utils/epipe.js';

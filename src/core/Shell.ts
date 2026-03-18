@@ -5,102 +5,66 @@ import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-interface CommandInfo {
-  cmd: string;
-  args: string[];
-  fullPath: string;
-  runner?: string[];
-  isSmart: boolean;
-}
-
 export class Shell {
-  private RUNNERS: Record<string, (p: string) => string[]> = {
-    '.ts': (p) => ['node', '--no-warnings', '--loader', 'ts-node/esm', p],
-    '.js': (p) => ['node', '--no-warnings', p],
-    '.py': (p) => ['uv', 'run', p],
-    '.rs': (p) => ['cargo', 'run', '--quiet', '--manifest-path', path.join(__dirname, '../../../sdk/rust/Cargo.toml'), '--example', path.basename(p, '.rs'), '--']
-  };
-
-  private builtins: Record<string, () => void> = {
-    help: () => {
-      console.log(`NewPipe - Orthogonal Agentic Shell\nArchitecture: FD 0/1 (Data), FD 2 (Diag), FD 3 (Signal)`);
-    }
-  };
-
-  private getCommandInfo(part: string): CommandInfo {
+  private getCommandInfo(part: string) {
     const [cmd, ...args] = part.split(' ');
-    const searchPaths = [
-      path.join(__dirname, '../commands'),
-      path.join(__dirname, '../../../src/commands')
-    ];
-
-    for (const p of searchPaths) {
-      for (const ext of Object.keys(this.RUNNERS)) {
-        const fullPath = path.join(p, `${cmd}${ext}`);
-        if (fs.existsSync(fullPath)) {
-          return { cmd: cmd!, args, fullPath, runner: this.RUNNERS[ext]!(fullPath), isSmart: true };
-        }
-      }
-    }
-
-    return { cmd: cmd!, args, fullPath: cmd!, isSmart: false };
+    const binPath = path.join(__dirname, '../../bin', cmd!);
+    const isSmart = fs.existsSync(binPath);
+    return { fullPath: isSmart ? binPath : cmd!, args, isSmart };
   }
 
   async execute(commandLine: string) {
     const pipeParts = commandLine.split('|').map(s => s.trim());
-    if (pipeParts.length === 1 && this.builtins[pipeParts[0]!]) {
-      this.builtins[pipeParts[0]!]!();
-      return;
-    }
-
     const commands = [...pipeParts];
-    if (commands[commands.length - 1] && !commands[commands.length - 1]?.startsWith('view')) {
-      commands.push('view');
-    }
-
+    const isViewPresent = commands[commands.length - 1]?.startsWith('view');
+    
     let processes: ChildProcess[] = [];
     let prevProcess: ChildProcess | null = null;
     let prevIsSmart = false;
 
     for (let i = 0; i < commands.length; i++) {
-      let info = this.getCommandInfo(commands[i]!);
+      const info = this.getCommandInfo(commands[i]!);
 
-      // Impedance Matching (Inject lower/lift if boundary crossed)
+      // Bridge Gap (Smart/Legacy boundary)
       if (prevProcess && prevIsSmart !== info.isSmart) {
-        const bridgeCmd = prevIsSmart ? 'lower' : 'lift';
-        const bridgeInfo = this.getCommandInfo(bridgeCmd);
-        const bridgeProc = spawn(bridgeInfo.runner![0]!, [...bridgeInfo.runner!.slice(1)], { stdio: ['pipe', 'pipe', 'inherit', 'pipe'] });
+        const bridge = this.getCommandInfo(prevIsSmart ? 'lower' : 'lift');
+        const bridgeProc = spawn(bridge.fullPath, [], { stdio: ['pipe', 'pipe', 'inherit', 'pipe'] });
         prevProcess.stdout!.pipe(bridgeProc.stdin!);
         prevProcess = bridgeProc;
         processes.push(bridgeProc);
       }
 
       const isRealLast = i === commands.length - 1;
-      const isSmartAndNeedsView = info.isSmart && isRealLast && !commands[commands.length-1]?.startsWith('view');
+      const needsView = info.isSmart && isRealLast && !isViewPresent;
 
       const stdio: any[] = [
         prevProcess ? 'pipe' : 'inherit',
-        (isRealLast && !isSmartAndNeedsView) ? 'inherit' : 'pipe',
+        (isRealLast && !needsView) ? 'inherit' : 'pipe',
         'inherit',
         'pipe' // FD 3: Signal Plane
       ];
 
-      const spawnArgs = info.runner ? [...info.runner.slice(1), ...info.args] : info.args;
-      const spawnCmd = info.runner ? info.runner[0]! : info.fullPath;
+      const proc = spawn(info.fullPath, info.args, { stdio });
+      if (prevProcess) prevProcess.stdout!.pipe(proc.stdin!);
 
-      const currentProcess = spawn(spawnCmd, spawnArgs, { stdio });
-      if (prevProcess && currentProcess.stdin) prevProcess.stdout!.pipe(currentProcess.stdin);
-
-      processes.push(currentProcess);
-      prevProcess = currentProcess;
+      processes.push(proc);
+      prevProcess = proc;
       prevIsSmart = info.isSmart;
     }
 
-    // Switchboard Routing
+    // Auto-append VIEW
+    if (prevIsSmart && !isViewPresent) {
+      const view = this.getCommandInfo('view');
+      const viewProc = spawn(view.fullPath, [], { stdio: ['pipe', 'inherit', 'inherit', 'pipe'] });
+      prevProcess!.stdout!.pipe(viewProc.stdin!);
+      processes.push(viewProc);
+    }
+
+    // Switchboard: Route signals between adjacent FD 3 pipes
     for (let i = 0; i < processes.length; i++) {
-      const p = processes[i]!;
-      if (p.stdio[3]) {
-        (p.stdio[3] as any).on('data', (chunk: Buffer) => {
+      const signalPipe = processes[i]!.stdio[3] as any;
+      if (signalPipe) {
+        signalPipe.on('data', (chunk: Buffer) => {
           if (i > 0 && processes[i-1]!.stdio[3]) (processes[i-1]!.stdio[3] as any).write(chunk);
           if (i < processes.length - 1 && processes[i+1]!.stdio[3]) (processes[i+1]!.stdio[3] as any).write(chunk);
         });

@@ -65,82 +65,108 @@ impl SignalPlane {
 }
 
 pub struct NewPipe {
-    pub signals: SignalPlane,
+    pub signals: Option<SignalPlane>,
     ready: Arc<(Mutex<bool>, Condvar)>,
     paused: Arc<Mutex<bool>>,
     stopped: Arc<Mutex<bool>>,
+    is_smart: bool,
 }
 
 impl NewPipe {
     pub fn new(mime_type: &str) -> Self {
-        let signals = SignalPlane::new(3);
         let ready = Arc::new((Mutex::new(false), Condvar::new()));
         let paused = Arc::new(Mutex::new(false));
         let stopped = Arc::new(Mutex::new(false));
 
-        let ready_clone = Arc::clone(&ready);
-        let paused_clone = Arc::clone(&paused);
-        let stopped_clone = Arc::clone(&stopped);
+        // Check if FD 3 is valid (simple way: try to get metadata)
+        let signals = if unsafe { libc::fcntl(3, libc::F_GETFD) } != -1 {
+            Some(SignalPlane::new(3))
+        } else {
+            None
+        };
 
-        signals.on_signal(move |sig| {
-            match sig.signal_type.as_str() {
-                "ACK" => {
-                    let (lock, cvar) = &*ready_clone;
-                    let mut ready = lock.lock().unwrap();
-                    *ready = true;
-                    cvar.notify_all();
+        if let Some(ref sigs) = signals {
+            let ready_clone = Arc::clone(&ready);
+            let paused_clone = Arc::clone(&paused);
+            let stopped_clone = Arc::clone(&stopped);
+
+            sigs.on_signal(move |sig| {
+                match sig.signal_type.as_str() {
+                    "ACK" => {
+                        let (lock, cvar) = &*ready_clone;
+                        let mut ready = lock.lock().unwrap();
+                        *ready = true;
+                        cvar.notify_all();
+                    }
+                    "PAUSE" => { *paused_clone.lock().unwrap() = true; }
+                    "RESUME" => { *paused_clone.lock().unwrap() = false; }
+                    "STOP" => { *stopped_clone.lock().unwrap() = true; }
+                    _ => {}
                 }
-                "PAUSE" => {
-                    *paused_clone.lock().unwrap() = true;
-                }
-                "RESUME" => {
-                    *paused_clone.lock().unwrap() = false;
-                }
-                "STOP" => {
-                    *stopped_clone.lock().unwrap() = true;
-                }
-                _ => {}
-            }
-        });
+            });
+        }
 
         let mut np = Self {
             signals,
             ready,
             paused,
             stopped,
+            is_smart: false,
         };
 
-        np.signals.send(SignalMessage {
-            signal_type: "HELO".to_string(),
-            mime_type: Some(mime_type.to_string()),
-            payload: None,
-        }).ok();
+        if let Some(ref mut sigs) = np.signals {
+            sigs.send(SignalMessage {
+                signal_type: "HELO".to_string(),
+                mime_type: Some(mime_type.to_string()),
+                payload: None,
+            }).ok();
+            
+            // Wait for 100ms for ACK
+            let (lock, cvar) = &*np.ready;
+            let ready = lock.lock().unwrap();
+            let result = cvar.wait_timeout(ready, std::time::Duration::from_millis(100)).unwrap();
+            if *result.0 {
+                np.is_smart = true;
+            }
+        }
 
         np
     }
 
     pub fn wait_for_ready(&self) {
+        if !self.is_smart && self.signals.is_none() {
+            return;
+        }
         let (lock, cvar) = &*self.ready;
         let mut ready = lock.lock().unwrap();
         while !*ready {
-            ready = cvar.wait(ready).unwrap();
+            // We wait with a timeout just in case
+            let result = cvar.wait_timeout(ready, std::time::Duration::from_millis(200)).unwrap();
+            if result.1.timed_out() {
+                break;
+            }
+            ready = result.0;
         }
     }
 
     pub fn emit<T: Serialize>(&mut self, data: T) -> io::Result<()> {
-        if *self.stopped.lock().unwrap() {
-            return Ok(());
-        }
-
+        if *self.stopped.lock().unwrap() { return Ok(()); }
+        
         while *self.paused.lock().unwrap() && !*self.stopped.lock().unwrap() {
             thread::sleep(std::time::Duration::from_millis(50));
         }
 
-        let payload = serde_json::to_vec(&data)?;
-        let mut stdout = io::stdout();
-        stdout.write_u32::<BigEndian>(payload.len() as u32)?;
-        stdout.write_all(&payload)?;
-        stdout.flush()?;
+        if self.is_smart {
+            let payload = serde_json::to_vec(&data)?;
+            let mut stdout = io::stdout();
+            stdout.write_u32::<BigEndian>(payload.len() as u32)?;
+            stdout.write_all(&payload)?;
+            stdout.flush()?;
+        } else {
+            // Standard Unix Fallback: Newline-delimited JSON
+            let json = serde_json::to_string(&data)?;
+            println!("{}", json);
+        }
         Ok(())
     }
 }

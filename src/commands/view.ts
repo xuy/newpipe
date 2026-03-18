@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { fileURLToPath } from 'url';
 import { SmartPipe } from '../core/SmartPipe.js';
 import { type Frame } from '../core/Frame.js';
@@ -18,7 +20,7 @@ export function view() {
   });
 
   process.stdin.pipe(pipe).on('data', (frame: Frame) => {
-    if (currentMimeType === 'application/json') {
+    if (currentMimeType.includes('json') || currentMimeType.includes('demo')) {
       try {
         const data = JSON.parse(frame.payload.toString());
         console.dir(data, { depth: null, colors: true });

@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import readline from 'readline';
 import { SmartPipe } from '../core/SmartPipe.js';
 import { handleEpipe } from '../utils/epipe.js';
