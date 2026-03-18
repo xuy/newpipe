@@ -43,6 +43,8 @@ export function grep(pattern: string, field?: string) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { handleHelp } = await import('../utils/help.js');
+  if (handleHelp({ name: 'grep', summary: 'filter records by regex', usage: 'grep <pattern> [field]', signals: ['HELO', 'ACK'] })) process.exit(0);
   const pattern = process.argv[2];
   const field = process.argv[3];
   if (!pattern) { process.exit(1); }

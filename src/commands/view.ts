@@ -39,5 +39,7 @@ export function view() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { handleHelp } = await import('../utils/help.js');
+  if (handleHelp({ name: 'view', summary: 'pretty-print records for terminal', usage: 'view', signals: ['HELO', 'ACK'] })) process.exit(0);
   view();
 }

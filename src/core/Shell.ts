@@ -29,7 +29,7 @@ interface CommandInfo {
 }
 
 export class Shell {
-  private builtins: Record<string, () => void | Promise<void>> = {
+  private builtins: Record<string, (args: string[]) => void | Promise<void>> = {
     help: () => {
       const cmds = this.discoverCommands();
       const cmdNames = cmds.map(c => c.name).join(', ');
@@ -52,7 +52,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
 2. Record-based Framing (Orthogonal Planes)
       `);
     },
-    doctor: () => doctor(this.getSearchDirs()),
+    doctor: (args: string[]) => doctor(this.getSearchDirs(), { probe: args.includes('--probe') }),
     github: () => { console.log('GitHub: https://github.com/xuy/newpipe'); },
     agent: () => { console.log('Agent status: Connected, Sandbox ready.'); },
     install: () => { console.log('NewPipe is already installed and ready.'); }
@@ -117,7 +117,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
       const parts = pipeParts[0]?.split(' ') ?? [];
       const cmd = parts[0];
       if (cmd && this.builtins[cmd]) {
-        await this.builtins[cmd]!();
+        await this.builtins[cmd]!(parts.slice(1));
         return;
       }
     }
@@ -209,7 +209,7 @@ The Unix pipe is 50 years old. NewPipe revisions it for the Agentic Era:
         const chunks: string[] = [];
         const origLog = console.log;
         console.log = (...args: any[]) => { chunks.push(args.join(' ')); };
-        await this.builtins[cmd]!();
+        await this.builtins[cmd]!(parts.slice(1));
         console.log = origLog;
         return {
           stdout: chunks.join('\n'),

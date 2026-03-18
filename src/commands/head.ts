@@ -34,6 +34,8 @@ export function head(n: number = 10) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { handleHelp } = await import('../utils/help.js');
+  if (handleHelp({ name: 'head', summary: 'limit stream to first N records', usage: 'head [n]', signals: ['HELO', 'ACK'] })) process.exit(0);
   const n = parseInt(process.argv[2] ?? '10', 10);
   head(n);
 }

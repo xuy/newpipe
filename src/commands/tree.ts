@@ -51,6 +51,8 @@ export async function tree(dirPath: string = '.', depth: number = 0, maxDepth: n
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { handleHelp } = await import('../utils/help.js');
+  if (handleHelp({ name: 'tree', summary: 'recursive directory listing as records', usage: 'tree [dir]', signals: ['HELO', 'ACK', 'PAUSE', 'RESUME', 'STOP'] })) process.exit(0);
   const dir = process.argv[2] || '.';
   tree(dir);
 }

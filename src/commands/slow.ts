@@ -41,5 +41,7 @@ export async function slow() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { handleHelp } = await import('../utils/help.js');
+  if (handleHelp({ name: 'slow', summary: 'backpressure demo consumer', usage: 'slow', signals: ['HELO', 'ACK', 'PAUSE', 'RESUME'] })) process.exit(0);
   slow();
 }

@@ -65,6 +65,8 @@ export async function ls(dirPath: string = '.') {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { handleHelp } = await import('../utils/help.js');
+  if (handleHelp({ name: 'ls', summary: 'list directory as typed records', usage: 'ls [dir]', signals: ['HELO', 'ACK', 'PAUSE', 'RESUME', 'STOP'] })) process.exit(0);
   const dir = process.argv[2] || '.';
   ls(dir);
 }
