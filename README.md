@@ -9,18 +9,22 @@ Unix pipes treat everything as an undifferentiated byte stream. This breaks in p
 
 ```bash
 # Binary data hits a text tool — silently corrupted
-cat model.safetensors | grep "layer" | wc -l    # nonsense result
-
-# Multi-line JSON piped through line-oriented tools — records split apart
-cat events.jsonl | sort | uniq                   # breaks on any record > 1 line
+cat model.safetensors | grep "layer" | wc -l      # nonsense result
 
 # No record boundaries — where does one record end and the next begin?
-cat data.parquet | head -5                       # 5 lines of binary garbage
+cat data.parquet | head -5                         # 5 lines of binary garbage
+
+# Pipeline is slow — is it the producer? The consumer? No way to tell.
+fast-producer | slow-consumer                      # just hangs. which one? good luck.
+
+# A stage has a bug mid-stream — you have to kill the whole pipeline and start over
+long-stream | buggy-transform | downstream         # can't swap the middle while it runs
 ```
 
 - **No record boundaries.** Pipes see bytes, not records. A binary payload gets split at arbitrary points.
 - **No type awareness.** A Parquet file piped through `grep` isn't filtering records — it's corrupting a binary format.
-- **No negotiation.** The producer has no idea what the consumer expects, and no way to ask.
+- **No observability.** A pipeline stalls and you can't tell which stage is slow — there's no signaling between stages.
+- **No hot-swap.** A bug in the middle of a long-running pipeline means killing everything and restarting from scratch.
 
 ## The Three Planes
 
