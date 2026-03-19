@@ -159,11 +159,11 @@ NewPipe commands speak the protocol on FD 3. Legacy tools like `grep`, `sort`, `
 ```
 pcat data.parquet | grep Madison | head 1
 
-  pcat (Smart)         HELO "application/vnd.apache.arrow.stream"
+  pcat (NewPipe)         HELO "application/vnd.apache.arrow.stream"
     └─ [auto: lower]   converts framed records → newline-delimited text
   grep (Legacy)        plain text stdin/stdout
     └─ [auto: lift]    converts text lines → framed records
-  head (Smart)         speaks the protocol on FD 3
+  head (NewPipe)         speaks the protocol on FD 3
 ```
 
 You don't have to think about this. The shell is a switchboard — it figures out the boundaries and bridges them.
