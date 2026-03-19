@@ -6,7 +6,10 @@ import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { Shell, type CaptureResult } from './core/Shell.js';
 
+import fs from 'fs';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(__dirname, '../..');
 
 // Set NEWPIPE_PATH so Shell can find smart commands
 // After build, all commands (TS, Python, Rust) land in dist/bin/
@@ -15,6 +18,15 @@ if (!process.env.NEWPIPE_PATH) {
 }
 
 const shell = new Shell();
+
+// --- Gap logging: track what falls back to bash and why ---
+const LOG_PATH = path.join(projectRoot, 'newpipe-gaps.jsonl');
+
+function logGap(entry: { timestamp: string; command: string; reason: string; engine: string; exitCode: number | null }) {
+  try {
+    fs.appendFileSync(LOG_PATH, JSON.stringify(entry) + '\n');
+  } catch {}
+}
 
 // --- Bash fallback: plain shell execution with timeout ---
 function execBash(command: string, timeoutMs: number, cwd?: string): Promise<CaptureResult> {
@@ -118,12 +130,17 @@ Examples:
           ? 'command not found in NewPipe path'
           : 'process failed to start';
         engine = 'bash';
+        logGap({ timestamp: new Date().toISOString(), command, reason: fallbackReason, engine: 'bash-fallback', exitCode: result.exitCode });
         result = await execBash(command, timeout_ms, cwd);
+      } else {
+        // Successful NewPipe execution — log it too for coverage tracking
+        logGap({ timestamp: new Date().toISOString(), command, reason: 'ok', engine: 'newpipe', exitCode: result.exitCode });
       }
     } catch (err: any) {
       // NewPipe crashed entirely — fall back to bash
       fallbackReason = `NewPipe error: ${err.message}`;
       engine = 'bash';
+      logGap({ timestamp: new Date().toISOString(), command, reason: fallbackReason, engine: 'bash-crash-fallback', exitCode: null });
       result = await execBash(command, timeout_ms, cwd);
     }
 
@@ -175,6 +192,69 @@ Examples:
       content: [{ type: 'text' as const, text }],
       isError: result.exitCode !== 0 || result.timedOut,
     };
+  }
+);
+
+server.tool(
+  'newpipe-gaps',
+  `Show NewPipe gap analysis — what commands fell back to bash and why.
+Use this to identify what NewPipe needs to support next.`,
+  {
+    tail: z.number().optional().default(50).describe('Number of recent entries to show'),
+    fallbacks_only: z.boolean().optional().default(false).describe('Only show bash fallbacks, not successful NewPipe executions'),
+  },
+  async ({ tail, fallbacks_only }) => {
+    try {
+      const raw = fs.readFileSync(LOG_PATH, 'utf-8').trim();
+      if (!raw) return { content: [{ type: 'text' as const, text: 'No gap data yet.' }] };
+
+      let entries = raw.split('\n').map(line => {
+        try { return JSON.parse(line); } catch { return null; }
+      }).filter(Boolean);
+
+      if (fallbacks_only) {
+        entries = entries.filter((e: any) => e.engine !== 'newpipe');
+      }
+
+      entries = entries.slice(-tail);
+
+      if (entries.length === 0) {
+        return { content: [{ type: 'text' as const, text: fallbacks_only ? 'No fallbacks recorded.' : 'No gap data yet.' }] };
+      }
+
+      // Summary
+      const total = entries.length;
+      const fallbacks = entries.filter((e: any) => e.engine !== 'newpipe').length;
+      const reasons = new Map<string, number>();
+      for (const e of entries) {
+        if ((e as any).engine !== 'newpipe') {
+          const r = (e as any).reason || 'unknown';
+          reasons.set(r, (reasons.get(r) || 0) + 1);
+        }
+      }
+
+      const parts: string[] = [];
+      parts.push(`NewPipe gap analysis (last ${total} commands):`);
+      parts.push(`  NewPipe: ${total - fallbacks} | Bash fallback: ${fallbacks}`);
+      if (reasons.size > 0) {
+        parts.push('\nFallback reasons:');
+        for (const [reason, count] of [...reasons.entries()].sort((a, b) => b[1] - a[1])) {
+          parts.push(`  ${count}x ${reason}`);
+        }
+      }
+      parts.push('\nRecent entries:');
+      for (const e of entries.slice(-20)) {
+        const icon = (e as any).engine === 'newpipe' ? '✓' : '✗';
+        parts.push(`  ${icon} [${(e as any).engine}] ${(e as any).command}`);
+        if ((e as any).engine !== 'newpipe') {
+          parts.push(`    reason: ${(e as any).reason}`);
+        }
+      }
+
+      return { content: [{ type: 'text' as const, text: parts.join('\n') }] };
+    } catch {
+      return { content: [{ type: 'text' as const, text: 'No gap data yet (log file not found).' }] };
+    }
   }
 );
 

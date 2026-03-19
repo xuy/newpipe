@@ -6,3 +6,4 @@ dist
 __pycache__/
 target/
 *.safetensors
+newpipe-gaps.jsonl
