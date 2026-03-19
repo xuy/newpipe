@@ -106,63 +106,83 @@ Drop it anywhere on `NEWPIPE_PATH` and it's composable with every other command:
 
 ## Under the Hood
 
-### Arrow-native data plane
+### How structured data flows
 
-When stages speak the same format, data stays in that format end-to-end. In this pipeline, everything is Arrow until the display boundary:
+In a traditional pipe, `cat file | grep pattern` works because both sides agree on a convention: lines of text. But there's no such convention for binary data, images, or structured records — the bytes just flow and you hope for the best.
+
+In NewPipe, every stage announces what it produces via `HELO` on the control channel. The downstream stage sees the type and adapts. Data stays in whatever format makes sense — if both sides speak Arrow, the records flow as Arrow batches without conversion. If one side speaks JSON, it flows as JSON frames. The framing (`[len][payload]`) means records never get split or corrupted regardless of format.
 
 ```
 pcat data.parquet | filter city Chicago | sort age | arrow-lower | head 3
 
-  pcat            HELO "application/vnd.apache.arrow.stream"
-    │             Emits Arrow IPC RecordBatches (10K rows each)
-  filter          Receives HELO → detects Arrow → columnar filter
-    │             No row-level deserialization
-  sort            Receives Arrow → columnar sort → re-emits Arrow
-    │
-  arrow-lower     Arrow → JSON at the boundary
-    │
-  head            Takes first 3 JSON records
-    └─ view       Pretty-prints to terminal
+  pcat      → HELO "application/vnd.apache.arrow.stream"
+  filter    → receives HELO, adapts to Arrow, filters columnar
+  sort      → receives Arrow, sorts columnar, re-emits Arrow
+  arrow-lower → converts to JSON at the display boundary
+  head      → takes first 3 JSON records
 ```
 
-### Polymorphic commands
+Contrast with the text world — the same pipeline on JSON works identically, just with a different MIME type flowing through the same protocol:
 
-Commands adapt to their input. `filter` checks the upstream HELO MIME type — if it's Arrow, it uses columnar operations; if it's JSON, it does regex matching. Same command, different data, right behavior. No flags, no configuration.
+```
+gen | filter source python | head 3
 
-### Automatic adapter injection
+  gen       → HELO "application/json"
+  filter    → receives HELO, adapts to JSON, matches with regex
+  head      → takes first 3 records
+```
 
-When a NewPipe command pipes to a legacy Unix tool (or vice versa), the shell injects adapters at the boundary:
+Same `filter` command. Different data. The protocol handles it.
+
+### How flow control works
+
+When a slow consumer can't keep up, traditional pipes silently buffer until the OS buffer fills, then the producer blocks — or data is lost. There's no coordination.
+
+NewPipe's control channel (FD 3) gives stages a way to talk back. A slow consumer sends `PAUSE`, the producer stops emitting. When the consumer catches up, it sends `RESUME`. When a stage like `head` has enough records, the shell sends `STOP` upstream and tears down the pipeline cleanly.
+
+```
+gen | slow
+
+  gen       → emits records
+  slow      → processes slowly, sends PAUSE when behind
+  gen       → stops emitting, waits
+  slow      → catches up, sends RESUME
+  gen       → resumes emitting
+```
+
+This is bidirectional, explicit, and observable. No silent buffering, no silent drops.
+
+### How it works with legacy Unix tools
+
+NewPipe commands speak the protocol on FD 3. Legacy tools like `grep`, `sort`, `wc` don't — they just read stdin and write stdout. When the shell detects a boundary between a NewPipe command and a legacy tool, it auto-injects adapters:
 
 ```
 pcat data.parquet | grep Madison | head 1
 
   pcat (Smart)         HELO "application/vnd.apache.arrow.stream"
-    └─ [auto: lower]   Smart → Legacy adapter
+    └─ [auto: lower]   converts framed records → newline-delimited text
   grep (Legacy)        plain text stdin/stdout
-    └─ [auto: lift]    Legacy → Smart adapter
-  head (Smart)         HELO/ACK on FD 3
-    └─ [auto: view]    Pretty-prints to terminal
+    └─ [auto: lift]    converts text lines → framed records
+  head (Smart)         speaks the protocol on FD 3
 ```
 
-The shell is a pure switchboard. The language a command is written in doesn't matter — only whether it speaks the protocol.
+You don't have to think about this. The shell is a switchboard — it figures out the boundaries and bridges them.
 
-### The pipe as a query language
+### Putting it together: the pipe as a query language
 
-Querying a Parquet file today means writing a pandas script or prompting an LLM to write one. With NewPipe, the pipe *is* the query:
+These pieces combine into something new. With framed records, type negotiation, and flow control, the pipe becomes a direct query interface for structured data:
 
 ```bash
 pcat data.parquet | groupby city | sort count desc | head 5
 # → Houston: 886, Brooklyn: 745, Chicago: 713, Los Angeles: 646, Philadelphia: 487
 
-pcat data.parquet | filter city Chicago | filter age gt 30 | count
-# → {"count": 346}
+pcat data.parquet | filter age gt 30 | count
+# → {"count": 55475}
 
-pcat data.parquet | groupby city age | sort mean_age desc | head 5
-pcat data.parquet | unique occupation | count
-pcat data.parquet | filter city Chicago | sort age | cols city,age,occupation | arrow-lower | head 5
+pcat data.parquet | filter city Chicago | sort age | cols city,age,occupation | arrow-lower | head 3
 ```
 
-No notebooks. No boilerplate. No English-to-code translation. Each stage is a word. You build queries incrementally — add a stage, see the result, refine. This only works because the protocol gives pipes structure.
+No notebooks. No boilerplate. Each stage is a word. You build queries incrementally — add a stage, see the result, refine. This is impossible with traditional pipes, where `cat data.parquet | grep Chicago` corrupts a binary file. The protocol is what makes the expression meaningful.
 
 ---
 
