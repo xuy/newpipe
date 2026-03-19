@@ -10,6 +10,9 @@
 import sys
 import os
 import json
+import signal
+
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 # SDK setup
 from newpipe import NewPipe

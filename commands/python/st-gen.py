@@ -8,6 +8,9 @@
 
 import sys
 import random
+import signal
+
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 # SDK setup
 from newpipe import NewPipe

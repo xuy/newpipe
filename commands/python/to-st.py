@@ -10,8 +10,11 @@
 # ///
 
 import sys
+import signal
 import torch
 from safetensors.torch import save_file
+
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 # SDK setup
 from newpipe import NewPipe
@@ -23,9 +26,6 @@ def main():
 
     output_path = sys.argv[1]
     pipe = NewPipe()
-    
-    # Accept any incoming type
-    pipe.signals.on_signal(lambda s: pipe.signals.send("ACK") if s.get("type") == "HELO" else None)
 
     tensors = {}
     print(f"Collecting records to save into {output_path}...", file=sys.stderr)

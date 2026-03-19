@@ -2,6 +2,9 @@
 
 import sys
 import time
+import signal
+
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 # Add SDK path
 from newpipe import NewPipe
