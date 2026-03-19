@@ -127,9 +127,9 @@ Each stage announces its output type via HELO. Downstream stages adapt. Data sta
 The same `filter` command works on JSON too — the protocol handles it:
 
 ```
-gen | filter source python | head 3
+cat users.jsonl | filter city Chicago | head 3
 
-  gen       → HELO "application/json"
+  cat       → HELO "application/json"
   filter    → receives HELO, adapts to JSON, matches with regex
   head      → takes first 3 records
 ```
