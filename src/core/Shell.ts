@@ -252,6 +252,47 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
       processes.push(viewProc);
     }
 
+    // Track which processes are still alive
+    const alive = new Set(processes.map((_, i) => i));
+
+    // Pipeline teardown on process exit.
+    // Key insight: upstream exiting is NORMAL (producer finished).
+    // Downstream exiting early means consumers are done — send STOP upstream.
+    function teardown(exitedIndex: number) {
+      alive.delete(exitedIndex);
+
+      // Destroy the exited process's signal socket so the router never writes to it
+      const signalPipe = processes[exitedIndex]!.stdio[3] as any;
+      if (signalPipe && !signalPipe.destroyed) {
+        signalPipe.destroy();
+      }
+
+      // If a DOWNSTREAM process exited (consumer is done), tell upstream to stop
+      // This is the `head` case: head got enough records, exits, producers should stop
+      for (let j = exitedIndex - 1; j >= 0; j--) {
+        if (!alive.has(j)) continue;
+        const upstreamSignal = processes[j]!.stdio[3] as any;
+        if (upstreamSignal && !upstreamSignal.destroyed) {
+          try { upstreamSignal.write('{"type":"STOP"}\n'); } catch {}
+          upstreamSignal.destroy();
+        }
+      }
+
+      // If all downstream processes are dead, kill remaining upstream after grace period
+      const hasLiveDownstream = Array.from(alive).some(idx => idx > exitedIndex);
+      if (!hasLiveDownstream && alive.size > 0) {
+        setTimeout(() => {
+          for (const idx of alive) {
+            try { processes[idx]!.kill('SIGTERM'); } catch {}
+          }
+        }, 200);
+      }
+    }
+
+    for (let i = 0; i < processes.length; i++) {
+      processes[i]!.on('exit', () => teardown(i));
+    }
+
     // Switchboard: Route signals directionally between adjacent stages
     // PAUSE/RESUME/ACK/STOP flow upstream (consumer→producer, i→i-1)
     // HELO/ERROR flow downstream (producer→consumer, i→i+1)
@@ -260,50 +301,49 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
       if (signalPipe) {
         signalPipe.on('error', () => {});
         signalPipe.on('data', (chunk: Buffer) => {
+          if (!alive.has(i)) return; // Process already dead, ignore
           for (const line of chunk.toString().split('\n')) {
             if (!line.trim()) continue;
             try {
               const signal: SignalMessage = JSON.parse(line);
               const msg = line + '\n';
               if (UPSTREAM_SIGNALS.has(signal.type as any)) {
-                // Route upstream: toward producer (i-1)
-                if (i > 0 && processes[i-1]!.stdio[3]) {
-                  try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+                if (i > 0 && alive.has(i - 1)) {
+                  const target = processes[i-1]!.stdio[3] as any;
+                  if (target && !target.destroyed) { try { target.write(msg); } catch {} }
                 }
               } else if (DOWNSTREAM_SIGNALS.has(signal.type as any)) {
-                // Route downstream: toward consumer (i+1)
-                if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
-                  try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+                if (i < processes.length - 1 && alive.has(i + 1)) {
+                  const target = processes[i+1]!.stdio[3] as any;
+                  if (target && !target.destroyed) { try { target.write(msg); } catch {} }
                 }
               } else {
                 // Unknown signal: route both directions (forward-compat)
-                if (i > 0 && processes[i-1]!.stdio[3]) {
-                  try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+                if (i > 0 && alive.has(i - 1)) {
+                  const target = processes[i-1]!.stdio[3] as any;
+                  if (target && !target.destroyed) { try { target.write(msg); } catch {} }
                 }
-                if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
-                  try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+                if (i < processes.length - 1 && alive.has(i + 1)) {
+                  const target = processes[i+1]!.stdio[3] as any;
+                  if (target && !target.destroyed) { try { target.write(msg); } catch {} }
                 }
               }
             } catch {
-              // Unparseable signal: broadcast (backward-compat)
-              const msg = line + '\n';
-              if (i > 0 && processes[i-1]!.stdio[3]) {
-                try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
-              }
-              if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
-                try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
-              }
+              // Unparseable — ignore from dead processes
             }
           }
         });
       }
     }
 
-    await new Promise((resolve) => {
-      const last = processes[processes.length - 1];
-      if (last) { last.on('exit', resolve); last.on('error', resolve); }
-      else resolve(null);
-    });
+    // Wait for ALL processes to exit (not just the last one)
+    await Promise.all(processes.map(proc =>
+      new Promise<void>(resolve => {
+        if (proc.exitCode !== null) { resolve(); return; }
+        proc.on('exit', () => resolve());
+        proc.on('error', () => resolve());
+      })
+    ));
   }
 
   async executeCapture(commandLine: string, options?: { timeoutMs?: number; cwd?: string }): Promise<CaptureResult> {
@@ -399,12 +439,53 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
     // Collect per-stage signals
     const stageSignals: string[][] = processes.map(() => []);
 
+    // Track which processes are still alive
+    const alive = new Set(processes.map((_, i) => i));
+
+    // Track exit codes per stage
+    const exitCodes: (number | null)[] = processes.map(() => null);
+
+    // Pipeline teardown — same logic as execute()
+    function teardown(exitedIndex: number) {
+      alive.delete(exitedIndex);
+      const signalPipe = processes[exitedIndex]!.stdio[3] as any;
+      if (signalPipe && !signalPipe.destroyed) signalPipe.destroy();
+
+      // Consumer exited → tell upstream producers to stop
+      for (let j = exitedIndex - 1; j >= 0; j--) {
+        if (!alive.has(j)) continue;
+        const upstreamSignal = processes[j]!.stdio[3] as any;
+        if (upstreamSignal && !upstreamSignal.destroyed) {
+          try { upstreamSignal.write('{"type":"STOP"}\n'); } catch {}
+          upstreamSignal.destroy();
+        }
+      }
+
+      // If all downstream is dead, kill remaining upstream after grace
+      const hasLiveDownstream = Array.from(alive).some(idx => idx > exitedIndex);
+      if (!hasLiveDownstream && alive.size > 0) {
+        setTimeout(() => {
+          for (const idx of alive) {
+            try { processes[idx]!.kill('SIGTERM'); } catch {}
+          }
+        }, 200);
+      }
+    }
+
+    for (let i = 0; i < processes.length; i++) {
+      processes[i]!.on('exit', (code) => {
+        exitCodes[i] = code;
+        teardown(i);
+      });
+    }
+
     // Switchboard: Route signals directionally between adjacent stages
     for (let i = 0; i < processes.length; i++) {
       const signalPipe = processes[i]!.stdio[3] as any;
       if (signalPipe) {
         signalPipe.on('error', () => {});
         signalPipe.on('data', (chunk: Buffer) => {
+          if (!alive.has(i)) return;
           for (const line of chunk.toString().split('\n')) {
             if (!line.trim()) continue;
             stageSignals[i]!.push(line.trim());
@@ -412,29 +493,27 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
               const signal: SignalMessage = JSON.parse(line);
               const msg = line + '\n';
               if (UPSTREAM_SIGNALS.has(signal.type as any)) {
-                if (i > 0 && processes[i-1]!.stdio[3]) {
-                  try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+                if (i > 0 && alive.has(i - 1)) {
+                  const target = processes[i-1]!.stdio[3] as any;
+                  if (target && !target.destroyed) { try { target.write(msg); } catch {} }
                 }
               } else if (DOWNSTREAM_SIGNALS.has(signal.type as any)) {
-                if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
-                  try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+                if (i < processes.length - 1 && alive.has(i + 1)) {
+                  const target = processes[i+1]!.stdio[3] as any;
+                  if (target && !target.destroyed) { try { target.write(msg); } catch {} }
                 }
               } else {
-                if (i > 0 && processes[i-1]!.stdio[3]) {
-                  try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
+                if (i > 0 && alive.has(i - 1)) {
+                  const target = processes[i-1]!.stdio[3] as any;
+                  if (target && !target.destroyed) { try { target.write(msg); } catch {} }
                 }
-                if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
-                  try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
+                if (i < processes.length - 1 && alive.has(i + 1)) {
+                  const target = processes[i+1]!.stdio[3] as any;
+                  if (target && !target.destroyed) { try { target.write(msg); } catch {} }
                 }
               }
             } catch {
-              const msg = line + '\n';
-              if (i > 0 && processes[i-1]!.stdio[3]) {
-                try { (processes[i-1]!.stdio[3] as any).write(msg); } catch {}
-              }
-              if (i < processes.length - 1 && processes[i+1]!.stdio[3]) {
-                try { (processes[i+1]!.stdio[3] as any).write(msg); } catch {}
-              }
+              // Unparseable — ignore
             }
           }
         });
@@ -459,13 +538,7 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
       firstProc.stdin.end();
     }
 
-    // Track exit codes per stage
-    const exitCodes: (number | null)[] = processes.map(() => null);
-    for (let i = 0; i < processes.length; i++) {
-      processes[i]!.on('exit', (code) => { exitCodes[i] = code; });
-    }
-
-    // Wait for completion with timeout
+    // Wait for all processes with timeout
     let timedOut = false;
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
@@ -473,7 +546,6 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
         for (const proc of processes) {
           try { proc.kill('SIGTERM'); } catch {}
         }
-        // Force kill after 2s grace period
         setTimeout(() => {
           for (const proc of processes) {
             try { proc.kill('SIGKILL'); } catch {}
@@ -482,8 +554,14 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
         }, 2000);
       }, timeoutMs);
 
-      lastProc.on('exit', () => { clearTimeout(timer); resolve(); });
-      lastProc.on('error', () => { clearTimeout(timer); resolve(); });
+      // Resolve when ALL processes have exited
+      Promise.all(processes.map(proc =>
+        new Promise<void>(r => {
+          if (proc.exitCode !== null) { r(); return; }
+          proc.on('exit', () => r());
+          proc.on('error', () => r());
+        })
+      )).then(() => { clearTimeout(timer); resolve(); });
     });
 
     const stdout = Buffer.concat(stdoutChunks).toString();
