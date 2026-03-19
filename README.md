@@ -105,13 +105,23 @@ pcat data.parquet | unique occupation | count
 
 | Demo | Command | What You'll See |
 | :--- | :--- | :--- |
-| **Polyglot** | `pcat data.parquet \| grep Madison` | Python reads Parquet, adapters bridge to TypeScript grep. |
+| **Polyglot** | `pcat data.parquet \| grep Madison` | Parquet reader and text grep composed seamlessly via adapters. |
 | **Backpressure** | `gen \| slow` | PAUSE/RESUME signals flow in real time. |
 | **Tensor Forge** | `st-gen \| to-st demo.st` | Binary Safetensors weights synthesized from metadata records. |
 
 ## Write Your Own Command
 
-Any executable that speaks the three-plane protocol is a NewPipe command. Here's one in Python using the SDK:
+A NewPipe command is any executable that speaks the three-plane protocol. Write it in any language — Python, TypeScript, Rust, Go, C — as long as it reads/writes framed records on FD 0/1 and speaks NDJSON on FD 3, it composes with everything else.
+
+SDKs handle the protocol for you:
+
+| Language | Location | Status |
+| :--- | :--- | :--- |
+| **Node.js** | `src/core/` | Native integration |
+| **Python** | `sdk/python/newpipe.py` | Full SDK — signals, framing, backpressure |
+| **Rust** | `sdk/rust/` | Full SDK — thread-safe signals, serde integration |
+
+Here's a complete command in Python:
 
 ```python
 #!/usr/bin/env python3
@@ -124,45 +134,32 @@ for i in range(100):
     pipe.emit({"index": i, "msg": f"record #{i}"})
 ```
 
-That's it. The SDK handles framing, handshake, and backpressure. Drop the file anywhere on `NEWPIPE_PATH` and it's composable with every other command:
+Drop it anywhere on `NEWPIPE_PATH` and it's composable with every other command:
 
 ```bash
 ./newpipe "my-command | grep record | head 5"
 ```
 
-## SDKs
-
-NewPipe is a protocol first. Join the ecosystem in any language:
-
-| Language | Location | Status |
-| :--- | :--- | :--- |
-| **Node.js** | `src/core/` | Native integration |
-| **Python** | `sdk/python/newpipe.py` | Full SDK — signals, framing, backpressure |
-| **Rust** | `sdk/rust/` | Full SDK — thread-safe signals, serde integration |
-
 ## Architecture
 
-**Arrow-native pipeline** — data stays in Arrow from source through transforms, no serialization until display:
+**Arrow-native pipeline** — data stays in Arrow from source through transforms, converted only at the display boundary:
 
 ```
 newpipe "pcat data.parquet | filter city Chicago | sort age | arrow-lower | head 3"
 
   Shell (Switchboard)
     │
-    ├─ pcat (Python)         HELO "application/vnd.apache.arrow.stream"
+    ├─ pcat                  HELO "application/vnd.apache.arrow.stream"
     │     │                  Emits Arrow IPC RecordBatches (10K rows each)
     │     │
-    ├─ filter (Python)       Receives HELO → detects Arrow → uses pyarrow.compute
-    │     │                  Columnar filter, no row-level deserialization
+    ├─ filter                Receives HELO → detects Arrow → columnar filter
+    │     │                  No row-level deserialization
     │     │
-    ├─ sort (Python)         Receives Arrow → sorts with pyarrow.compute
-    │     │                  Re-emits sorted Arrow batches
+    ├─ sort                  Receives Arrow → columnar sort → re-emits Arrow
     │     │
-    ├─ arrow-lower (Python)  Arrow → JSON (one record per row)
-    │     │                  Conversion happens here, at the boundary
+    ├─ arrow-lower           Arrow → JSON at the boundary
     │     │
-    ├─ head (TypeScript)     Takes first 3 JSON records
-    │     │
+    ├─ head                  Takes first 3 JSON records
     │     ├─ [auto: view]    Pretty-prints to terminal
     │
     └─ Done.
@@ -175,22 +172,19 @@ newpipe "pcat data.parquet | grep Madison | head 1"
 
   Shell (Switchboard)
     │
-    ├─ pcat (Python, Smart)     HELO "application/vnd.apache.arrow.stream"
-    │     │
-    │     ├─ [auto: lower]      Smart-to-Legacy adapter (Arrow → text)
-    │     │
-    ├─ grep (Legacy Unix)       plain text stdin/stdout
-    │     │
-    │     ├─ [auto: lift]       Legacy-to-Smart adapter (text → framed)
-    │     │
-    ├─ head (TypeScript, Smart) HELO/ACK on FD 3
-    │     │
-    │     ├─ [auto: view]       Pretty-prints to terminal
+    ├─ pcat (Smart)              HELO "application/vnd.apache.arrow.stream"
+    │     ├─ [auto: lower]       Smart → Legacy adapter
+    │
+    ├─ grep (Legacy)             plain text stdin/stdout
+    │     ├─ [auto: lift]        Legacy → Smart adapter
+    │
+    ├─ head (Smart)              HELO/ACK on FD 3
+    │     ├─ [auto: view]        Pretty-prints to terminal
     │
     └─ Done.
 ```
 
-The shell is a pure switchboard: it routes signals between adjacent smart stages, injects adapters at smart/legacy boundaries, and appends `view` when a smart pipeline ends at the terminal. Commands are polymorphic — `filter` checks the upstream HELO MIME type and dispatches to Arrow or JSON processing automatically.
+The shell is a pure switchboard: it routes signals between adjacent stages, injects adapters at smart/legacy boundaries, and appends `view` when a pipeline ends at the terminal. Commands are polymorphic — `filter` checks the upstream HELO MIME type and dispatches to Arrow or JSON processing automatically. The language a command is written in doesn't matter — only whether it speaks the protocol.
 
 ---
 
