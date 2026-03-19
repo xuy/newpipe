@@ -17,7 +17,6 @@ export function view() {
   signalPlane.onSignal((signal) => {
     if (signal.type === SignalType.HELO) {
       currentMimeType = signal.mimeType || 'text/plain';
-      console.error(`\x1b[35m[Contract]\x1b[0m Established: ${currentMimeType}`);
       signalPlane.send({ type: SignalType.ACK });
     }
   });
