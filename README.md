@@ -73,33 +73,6 @@ npm install && npm run build
 ./newpipe "gen | slow"   # watch backpressure in action
 ```
 
-## Demos
-
-**SQL-like queries on Parquet — through pipes:**
-
-```bash
-# Top 5 cities by population
-pcat data.parquet | groupby city | sort count desc | head 5
-
-# People over 30 in Chicago
-pcat data.parquet | filter city Chicago | filter age gt 30 | count
-
-# Average age per city, sorted
-pcat data.parquet | groupby city age | sort mean_age desc | head 10
-
-# Project columns, youngest first
-pcat data.parquet | filter city Chicago | sort age | cols city,age,occupation | arrow-lower | head 5
-
-# Distinct occupations
-pcat data.parquet | unique occupation | count
-```
-
-| Demo | Command | What You'll See |
-| :--- | :--- | :--- |
-| **Polyglot** | `pcat data.parquet \| grep Madison` | Parquet reader and text grep composed seamlessly via adapters. |
-| **Backpressure** | `gen \| slow` | PAUSE/RESUME signals flow in real time. |
-| **Tensor Forge** | `st-gen \| to-st demo.st` | Binary Safetensors weights synthesized from metadata records. |
-
 ## Write Your Own Command
 
 A NewPipe command is any executable that speaks the protocol. Write it in any language — as long as it reads/writes framed records on FD 0/1 and speaks NDJSON on FD 3, it composes with everything else.
@@ -131,64 +104,65 @@ Drop it anywhere on `NEWPIPE_PATH` and it's composable with every other command:
 ./newpipe "my-command | grep record | head 5"
 ```
 
-## Architecture
+## Under the Hood
 
-**Arrow-native pipeline** — data stays in Arrow from source through transforms, converted only at the display boundary:
+### Arrow-native data plane
 
-```
-newpipe "pcat data.parquet | filter city Chicago | sort age | arrow-lower | head 3"
-
-  Shell (Switchboard)
-    │
-    ├─ pcat                  HELO "application/vnd.apache.arrow.stream"
-    │     │                  Emits Arrow IPC RecordBatches (10K rows each)
-    │     │
-    ├─ filter                Receives HELO → detects Arrow → columnar filter
-    │     │                  No row-level deserialization
-    │     │
-    ├─ sort                  Receives Arrow → columnar sort → re-emits Arrow
-    │     │
-    ├─ arrow-lower           Arrow → JSON at the boundary
-    │     │
-    ├─ head                  Takes first 3 JSON records
-    │     ├─ [auto: view]    Pretty-prints to terminal
-    │
-    └─ Done.
-```
-
-**Mixed smart/legacy pipeline** — the shell auto-injects adapters at boundaries:
+When stages speak the same format, data stays in that format end-to-end. In this pipeline, everything is Arrow until the display boundary:
 
 ```
-newpipe "pcat data.parquet | grep Madison | head 1"
+pcat data.parquet | filter city Chicago | sort age | arrow-lower | head 3
 
-  Shell (Switchboard)
+  pcat            HELO "application/vnd.apache.arrow.stream"
+    │             Emits Arrow IPC RecordBatches (10K rows each)
+  filter          Receives HELO → detects Arrow → columnar filter
+    │             No row-level deserialization
+  sort            Receives Arrow → columnar sort → re-emits Arrow
     │
-    ├─ pcat (Smart)              HELO "application/vnd.apache.arrow.stream"
-    │     ├─ [auto: lower]       Smart → Legacy adapter
+  arrow-lower     Arrow → JSON at the boundary
     │
-    ├─ grep (Legacy)             plain text stdin/stdout
-    │     ├─ [auto: lift]        Legacy → Smart adapter
-    │
-    ├─ head (Smart)              HELO/ACK on FD 3
-    │     ├─ [auto: view]        Pretty-prints to terminal
-    │
-    └─ Done.
+  head            Takes first 3 JSON records
+    └─ view       Pretty-prints to terminal
 ```
 
-The shell is a pure switchboard: it routes signals between adjacent stages, injects adapters at smart/legacy boundaries, and appends `view` when a pipeline ends at the terminal. Commands are polymorphic — `filter` checks the upstream HELO MIME type and dispatches to Arrow or JSON processing automatically. The language a command is written in doesn't matter — only whether it speaks the protocol.
+### Polymorphic commands
 
-## Case Study: The Pipe as a Query Language
+Commands adapt to their input. `filter` checks the upstream HELO MIME type — if it's Arrow, it uses columnar operations; if it's JSON, it does regex matching. Same command, different data, right behavior. No flags, no configuration.
+
+### Automatic adapter injection
+
+When a NewPipe command pipes to a legacy Unix tool (or vice versa), the shell injects adapters at the boundary:
+
+```
+pcat data.parquet | grep Madison | head 1
+
+  pcat (Smart)         HELO "application/vnd.apache.arrow.stream"
+    └─ [auto: lower]   Smart → Legacy adapter
+  grep (Legacy)        plain text stdin/stdout
+    └─ [auto: lift]    Legacy → Smart adapter
+  head (Smart)         HELO/ACK on FD 3
+    └─ [auto: view]    Pretty-prints to terminal
+```
+
+The shell is a pure switchboard. The language a command is written in doesn't matter — only whether it speaks the protocol.
+
+### The pipe as a query language
 
 Querying a Parquet file today means writing a pandas script or prompting an LLM to write one. With NewPipe, the pipe *is* the query:
 
 ```bash
 pcat data.parquet | groupby city | sort count desc | head 5
 # → Houston: 886, Brooklyn: 745, Chicago: 713, Los Angeles: 646, Philadelphia: 487
+
+pcat data.parquet | filter city Chicago | filter age gt 30 | count
+# → {"count": 346}
+
+pcat data.parquet | groupby city age | sort mean_age desc | head 5
+pcat data.parquet | unique occupation | count
+pcat data.parquet | filter city Chicago | sort age | cols city,age,occupation | arrow-lower | head 5
 ```
 
-No notebooks. No boilerplate. No English-to-code translation. Each stage is a word. You build queries incrementally — add a stage, see the result, refine.
-
-This is impossible with traditional pipes. `cat data.parquet | grep Chicago` corrupts a binary file. But NewPipe's protocol — framed records, type negotiation, Arrow-native transport — means `filter` actually operates on structured records, `groupby` aggregates columnar data, and the whole pipeline stays in Arrow until the display boundary. The pipe becomes a direct manipulation interface for structured data.
+No notebooks. No boilerplate. No English-to-code translation. Each stage is a word. You build queries incrementally — add a stage, see the result, refine. This only works because the protocol gives pipes structure.
 
 ---
 
