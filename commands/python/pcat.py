@@ -2,13 +2,15 @@
 
 # /// script
 # dependencies = [
-#   "pandas",
 #   "pyarrow",
 # ]
 # ///
 
 import sys
-import json
+import signal
+
+# Gracefully handle EPIPE (downstream closed)
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
 # SDK setup
 from newpipe import NewPipe
@@ -19,25 +21,26 @@ def main():
         sys.exit(1)
 
     file_path = sys.argv[1]
-    
-    # We use a deferred import for pandas/pyarrow to allow the NewPipe HELO to go out first
-    # and so we can fail gracefully if deps are missing
-    pipe = NewPipe(mime_type="application/x-parquet")
+
+    pipe = NewPipe(mime_type="application/vnd.apache.arrow.stream")
     pipe.wait_for_ready(timeout=0.5)
 
     try:
-        import pandas as pd
-        df = pd.read_parquet(file_path)
-        
-        # Convert to records
-        records = df.to_dict('records')
-        
-        for record in records:
+        import pyarrow.parquet as pq
+        import pyarrow as pa
+
+        parquet_file = pq.ParquetFile(file_path)
+        for batch in parquet_file.iter_batches(batch_size=10_000):
             if pipe.stopped: break
-            pipe.emit(record)
-            
+            # Serialize the RecordBatch as an Arrow IPC stream message
+            sink = pa.BufferOutputStream()
+            writer = pa.ipc.new_stream(sink, batch.schema)
+            writer.write_batch(batch)
+            writer.close()
+            pipe.emit_raw(sink.getvalue().to_pybytes())
+
     except ImportError:
-        pipe.signals.send("ERROR", payload="Missing pandas or pyarrow. Please install them or run with 'uv run --with pandas --with pyarrow'")
+        pipe.signals.send("ERROR", payload="Missing pyarrow. Please install it or run with 'uv run --with pyarrow'")
         sys.exit(1)
     except Exception as e:
         pipe.signals.send("ERROR", payload=str(e))

@@ -97,6 +97,16 @@ class NewPipe:
         sys.stdout.buffer.write(payload)
         sys.stdout.buffer.flush()
 
+    def emit_raw(self, payload: bytes):
+        """Emit raw bytes as a frame — no JSON serialization.
+        Use for binary payloads like Arrow IPC batches."""
+        if self.stopped: return
+        self._flow.wait()
+        header = struct.pack('>I', len(payload))
+        sys.stdout.buffer.write(header)
+        sys.stdout.buffer.write(payload)
+        sys.stdout.buffer.flush()
+
     def records(self):
         """Generator for incoming records from stdin"""
         while not self.stopped:
