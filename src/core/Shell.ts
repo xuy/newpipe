@@ -139,7 +139,7 @@ The Unix pipe is 50 years old. NewPipe revises it for the Agentic Era:
 2. Record-based Framing (Orthogonal Planes)
       `);
     },
-    doctor: (args: string[]) => doctor(this.getSearchDirs(), { probe: args.includes('--probe') }),
+    doctor: () => doctor(this.getSearchDirs()),
     github: () => { console.log('GitHub: https://github.com/xuy/newpipe'); },
     agent: () => { console.log('Agent status: Connected, Sandbox ready.'); },
     install: () => { console.log('NewPipe is already installed and ready.'); }

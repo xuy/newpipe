@@ -6,8 +6,9 @@ import threading
 import time
 
 class SignalPlane:
-    def __init__(self, fd=3):
-        self.fd = fd
+    def __init__(self, fd=None):
+        # Respect NEWPIPE_SIGNAL_FD env var, default to 3
+        self.fd = fd if fd is not None else int(os.environ.get('NEWPIPE_SIGNAL_FD', '3'))
         self.listeners = []
         try:
             # FD 3 must be a bidirectional channel (socketpair).

@@ -1,4 +1,3 @@
-import { execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -22,29 +21,8 @@ function printResult(r: CheckResult) {
   console.log(`  ${line}`);
 }
 
-function probeCommand(cmdPath: string): CheckResult {
-  const name = path.basename(cmdPath).replace(/\.(js|py|rs)$/, '');
-  try {
-    const output = execSync(`NEWPIPE_SIGNAL_FD=3 "${cmdPath}" --help 2>/dev/null`, {
-      timeout: 5000,
-      encoding: 'utf-8',
-    });
-    if (output.includes('Protocol: newpipe')) {
-      const protoMatch = output.match(/Protocol:\s*(\S+)/);
-      const sigMatch = output.match(/Signals:\s*(.+)/);
-      const proto = protoMatch?.[1] ?? 'newpipe';
-      const sigs = sigMatch?.[1]?.trim() ?? '';
-      return check(true, name, `${proto} [${sigs}]`);
-    }
-    return check(false, name, 'no Protocol: line in --help output');
-  } catch (err: any) {
-    return check(false, name, `probe failed: ${err.message?.split('\n')[0]}`);
-  }
-}
-
-export function doctor(searchDirs: string[], opts?: { probe?: boolean | undefined }) {
+export function doctor(searchDirs: string[]) {
   let warnings = 0;
-  const probe = opts?.probe ?? false;
 
   // --- NEWPIPE_PATH ---
   console.log('\nChecking NEWPIPE_PATH...');
@@ -103,25 +81,11 @@ export function doctor(searchDirs: string[], opts?: { probe?: boolean | undefine
     printResult(check(true, 'No shadows', 'no NewPipe commands shadow system commands'));
   }
 
-  // --- Protocol probe (only with --probe) ---
-  if (probe) {
-    console.log('\nProbing protocol compliance...');
-    for (const cmd of allCommands) {
-      const result = probeCommand(cmd.fullPath);
-      printResult(result);
-      if (!result.ok) warnings++;
-    }
-  }
-
   // --- Summary ---
   console.log('');
   if (warnings === 0) {
     console.log('\x1b[32mYour NewPipe installation looks good.\x1b[0m\n');
   } else {
     console.log(`\x1b[33mYour NewPipe installation has ${warnings} warning(s).\x1b[0m\n`);
-  }
-
-  if (!probe) {
-    console.log('Run `doctor --probe` for deep protocol compliance checks.\n');
   }
 }
