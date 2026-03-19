@@ -53,20 +53,20 @@ NewPipe decomposes process communication into three strictly separated physical 
 
 ## Why Now
 
-Three things changed since the Unix pipe was invented in 1973:
+Unix pipes are powerful — and AI agents already use them. But pipes are not agent-native. This is our effort to push the boundary.
 
-### Data got multimodal
-We work with Parquet files, tensor weights, Arrow batches, images, embeddings — not ASCII text. Data also got bigger and more structured. Piping a Parquet file through `grep` isn't filtering; it's corruption. NewPipe treats all formats as first-class framed record streams, with each stage declaring its content type.
+### Agents handle multimodal data. Pipes only handle text.
+Agents work with images, audio, binary formats, structured records, embeddings — not just ASCII lines. A scanned invoice is a PNG. A podcast is audio. A dataset is Arrow batches. None of these survive a trip through `grep`. Today, agents are forced to serialize everything to text before piping, losing structure, type safety, and performance. NewPipe's framed data plane carries any content type natively, with each stage declaring what it produces and what it consumes via HELO.
 
-### AI is useless without context
-AI agents are powerful reasoners but terrible guessers. A black-box pipe that returns an opaque byte stream and a return code gives an agent nothing to reason about. NewPipe's control plane exposes typed contracts (`HELO/ACK`), flow state (`PAUSE/RESUME`), and structured diagnostics — turning every pipeline into something an agent can observe, understand, and act on.
-
-### AI can reside inside the pipe
-An LLM is just another transform — records in, records out. In NewPipe, an `llm` command is a regular pipeline stage. When inference is slow, upstream PAUSEs. When the prompt needs schema context, the control plane provides it. Classical tools and AI compose freely:
+### Subagents can reside inside the pipe.
+An LLM is just another transform — records in, records out. In NewPipe, an agent is a regular pipeline stage. It receives typed, structured records. When inference is slow, upstream PAUSEs automatically. When the prompt needs schema context, the control plane provides it. Classical tools and AI subagents compose in a single expression:
 
 ```bash
-pcat invoices.parquet | llm "flag suspicious entries" | grep suspicious | view
+scan invoices/ | llm "flag suspicious entries" | filter flagged eq true | view
 ```
+
+### Agents need control, not just output.
+When an agent orchestrates a pipeline, it needs more than the final byte stream. It needs to know which stage is slow, what types are flowing, whether a producer is paused or erroring. The control plane gives agents transparent, real-time visibility into every stage — typed contracts (`HELO/ACK`), flow state (`PAUSE/RESUME`), lifecycle (`STOP/ERROR`), and structured diagnostics. A pipeline becomes something an agent can reason about, not a black box it hopes will work.
 
 ## Quick Start
 
