@@ -82,10 +82,31 @@ npm install && npm run build
 
 ## Demos
 
+**SQL-like queries on Parquet — through pipes:**
+
+```bash
+# Top 5 cities by population
+pcat data.parquet | groupby city | sort count desc | head 5
+
+# People over 30 in Chicago
+pcat data.parquet | filter city Chicago | filter age gt 30 | count
+
+# Average age per city, sorted
+pcat data.parquet | groupby city age | sort mean_age desc | head 10
+
+# Project columns, youngest first
+pcat data.parquet | filter city Chicago | sort age | cols city,age,occupation | arrow-lower | head 5
+
+# Distinct occupations
+pcat data.parquet | unique occupation | count
+```
+
+**More demos:**
+
 | Demo | Command | What You'll See |
 | :--- | :--- | :--- |
-| **Polyglot** | `pcat data.parquet \| grep Madison` | Python reads Parquet, adapters bridge to TypeScript grep — seamlessly. |
-| **Backpressure** | `gen \| slow` | The Signal Plane lights up: PAUSE/RESUME flow in real time. |
+| **Polyglot** | `pcat data.parquet \| grep Madison` | Python reads Parquet, adapters bridge to TypeScript grep. |
+| **Backpressure** | `gen \| slow` | PAUSE/RESUME signals flow in real time. |
 | **Tensor Forge** | `st-gen \| to-st demo.st` | Binary Safetensors weights synthesized from metadata records. |
 
 ## Write Your Own Command
@@ -121,27 +142,55 @@ NewPipe is a protocol first. Join the ecosystem in any language:
 
 ## Architecture
 
+**Arrow-native pipeline** — data stays in Arrow from source through transforms, no serialization until display:
+
+```
+newpipe "pcat data.parquet | filter city Chicago | sort age | arrow-lower | head 3"
+
+  Shell (Switchboard)
+    │
+    ├─ pcat (Python)         HELO "application/vnd.apache.arrow.stream"
+    │     │                  Emits Arrow IPC RecordBatches (10K rows each)
+    │     │
+    ├─ filter (Python)       Receives HELO → detects Arrow → uses pyarrow.compute
+    │     │                  Columnar filter, no row-level deserialization
+    │     │
+    ├─ sort (Python)         Receives Arrow → sorts with pyarrow.compute
+    │     │                  Re-emits sorted Arrow batches
+    │     │
+    ├─ arrow-lower (Python)  Arrow → JSON (one record per row)
+    │     │                  Conversion happens here, at the boundary
+    │     │
+    ├─ head (TypeScript)     Takes first 3 JSON records
+    │     │
+    │     ├─ [auto: view]    Pretty-prints to terminal
+    │
+    └─ Done.
+```
+
+**Mixed smart/legacy pipeline** — the shell auto-injects adapters at boundaries:
+
 ```
 newpipe "pcat data.parquet | grep Madison | head 1"
 
   Shell (Switchboard)
     │
-    ├─ pcat (Python, Smart)     ← HELO "application/x-parquet" →
+    ├─ pcat (Python, Smart)     HELO "application/vnd.apache.arrow.stream"
     │     │
-    │     ├─ [auto: lower]      ← Smart-to-Legacy adapter
+    │     ├─ [auto: lower]      Smart-to-Legacy adapter (Arrow → text)
     │     │
-    ├─ grep (Legacy Unix)       ← plain text stdin/stdout
+    ├─ grep (Legacy Unix)       plain text stdin/stdout
     │     │
-    │     ├─ [auto: lift]       ← Legacy-to-Smart adapter
+    │     ├─ [auto: lift]       Legacy-to-Smart adapter (text → framed)
     │     │
-    ├─ head (TypeScript, Smart) ← HELO/ACK on FD 3
+    ├─ head (TypeScript, Smart) HELO/ACK on FD 3
     │     │
-    │     ├─ [auto: view]       ← pretty-prints to terminal
+    │     ├─ [auto: view]       Pretty-prints to terminal
     │
     └─ Done.
 ```
 
-The shell is a pure switchboard: it routes signals between adjacent smart stages, injects adapters at smart/legacy boundaries, and appends `view` when a smart pipeline ends at the terminal.
+The shell is a pure switchboard: it routes signals between adjacent smart stages, injects adapters at smart/legacy boundaries, and appends `view` when a smart pipeline ends at the terminal. Commands are polymorphic — `filter` checks the upstream HELO MIME type and dispatches to Arrow or JSON processing automatically.
 
 ---
 
