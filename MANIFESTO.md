@@ -1,37 +1,44 @@
 # 🐚 The NewPipe Manifesto
-### Rethinking the Nervous System of Computing for the Agentic Era
 
-## 1. The Legacy Wall
-The Unix pipe is arguably the most successful abstraction in computing history. For 50 years, `|` has been the glue of the digital world. But it was designed for a world of human operators and ASCII teletypes. 
+## The pipe is 50 years old. AI agents deserve better.
 
-In the era of AI Agents, the "unstructured byte stream" has become a bottleneck. Agents do not think in bytes; they think in **Context, Records, and Intent**. Traditional pipes are silent, passive, and brittle. When they break, they break opaquely. When they overwhelm, they do so destructively. 
+The Unix pipe is the most successful abstraction in computing history. For 50 years, `|` has been the glue of the digital world.
 
-**NewPipe is the rebellion against the dumb straw.**
+But it was designed for human operators and ASCII teletypes. Agents don't think in bytes. They think in records, types, and intent. They work with images, audio, structured data, and binary formats — not lines of text. When a pipe breaks, it breaks silently. When it overwhelms, it drops data. When an agent asks "what went wrong?", the pipe has nothing to say.
 
-## 2. The Orthogonal Axioms (Where We Are)
-We believe that process communication and shell orchestration must be decomposed into strictly separated, orthogonal concepts to ensure predictability and control. We reject "magic" and "hacks" in favor of absolute clarity.
+**NewPipe makes pipes agent-native.**
 
-*   **The Data Plane (FD 0/1):** Must be record-oriented and framed. No process should ever have to "guess" where a record ends. It is a high-throughput, binary-first transport. `[PayloadLength(4)][PayloadBytes]`.
-*   **The Control Plane (FD 3):** Must be bi-directional and out-of-band. Processes must be able to negotiate contracts (`HELO/ACK`) and exercise flow control (`PAUSE/RESUME`) using predictable NDJSON, without corrupting the data buffer.
-*   **The Diagnostic Plane (FD 2):** Must remain human-readable. Logs, errors, and "whispers" from the process should never interfere with the machine-readable Data Plane.
-*   **The Language-Blind Kernel:** The Shell must act as a pure Switchboard. It cares only about Paths (`NEWPIPE_PATH`), not Languages (`.py`, `.ts`, `.rs`). A command's "Smartness" is defined by its willingness to speak on FD 3, not by hardcoded runners.
-*   **Explicit Context over Magic:** Environments must be explicit. A process knows it is in a Smart Shell because it receives `NEWPIPE_SIGNAL_FD=3`, bypassing arbitrary timeouts or guessed states.
+## Three Planes, Not One
 
-## 3. The New Physics: Negotiation over Flow
-In NewPipe, a pipeline is not just a sequence of commands; it is a **Distributed State Machine**. 
+The Unix pipe is a single undifferentiated byte stream. NewPipe decomposes it into three:
 
-We have moved from a model of "Fire and Forget" to a model of **"Negotiate and Adapt."** Before a single record flows, the producer and consumer must shake hands. If the consumer is overwhelmed, the producer halts at the source. This bi-directional pressure gives the shell a "nervous system" that standard Unix lacks.
+- **Data Plane** — Framed, typed records. A stream of `[length][payload]` frames, not raw bytes. No process ever has to guess where a record ends. Binary, images, Arrow batches — any content type, declared up front.
 
-## 4. The Horizon (Where We Are Going)
-Our vision for the future of NewPipe is not just a better shell, but a **Programmable Data Fabric**:
+- **Control Plane** — Bidirectional negotiation, out of band. Before data flows, producer and consumer shake hands (`HELO/ACK`). If the consumer is overwhelmed, the producer halts (`PAUSE/RESUME`). If something breaks, the error travels separately (`ERROR`). The pipeline has a nervous system.
 
-*   **Runtime Healing:** A pipeline that doesn't die when a command crashes. The Shell should pause the producer, allow an Agent to hot-swap the logic, and resume execution without losing a single record.
-*   **Semantic Routing:** Pipes that don't just flow linearly, but branch and route based on the *meaning* of the records, directed by an Agent's overarching goal.
-*   **Universal Polyglotism:** A world where Python, Node.js, Rust, and Legacy C tools compose flawlessly because they all speak the same Orthogonal Plane protocol.
-*   **Contextual Intelligence:** A Signal Plane where Agents can "whisper" context to their tools, turning a simple `grep` into a semantic filter that understands the "Why" behind the search.
+- **Diagnostic Plane** — Observable by humans and agents. Logs and status that never corrupt the data stream. An operator sees what's happening; an agent parses it to reason about the pipeline.
 
-## 5. The Goal
-NewPipe exists to provide the **High-Fidelity Sandbox** that AI Agents deserve. We are building a world where the shell is not just a place to run commands, but a collaborative partner in data orchestration.
+## Negotiation, Not Fire-and-Forget
+
+A traditional pipe is passive — data flows and you hope for the best. NewPipe pipelines are **distributed state machines**. Every stage negotiates before producing. Every consumer can push back. Every failure is signaled, not silent.
+
+This means an agent orchestrating a pipeline can see what types are flowing, which stage is slow, and whether a producer is paused or erroring — in real time, through the protocol.
+
+## Where This Goes
+
+NewPipe is not just a better shell. It's a foundation for **agent-native data orchestration**:
+
+- **Subagents as pipeline stages.** An LLM is just another transform — records in, records out. Classical tools and AI subagents compose in a single expression.
+
+- **Runtime healing.** A pipeline that doesn't die when a stage crashes. Pause the producer, hot-swap the broken stage, resume — without losing a record.
+
+- **Semantic routing.** Pipes that branch and route based on the meaning of the records, directed by an agent's goal.
+
+- **Contextual intelligence.** A control plane where agents whisper context to their tools — turning a simple filter into a semantic operation that understands the *why* behind the query.
+
+## The Goal
+
+The shell has been a place to run commands. We're making it a place where agents orchestrate work.
 
 **The pipe is no longer a straw. It is a bridge.**
 
