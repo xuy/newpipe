@@ -65,6 +65,15 @@ An LLM is just another transform — records in, records out. In NewPipe, an age
 scan invoices/ | llm "flag suspicious entries" | filter flagged eq true | view
 ```
 
+### The pipe becomes a query language.
+With traditional pipes, querying a Parquet file means writing a pandas script or prompting an LLM to write one for you. With NewPipe, the pipe *is* the query:
+
+```bash
+pcat data.parquet | filter city Chicago | groupby occupation | sort count desc | head 5
+```
+
+No notebooks. No boilerplate. No English-to-code translation. Each stage is a word. You build queries incrementally — add a stage, see the result, refine. This only works because the protocol gives pipes structure: framed records, type negotiation, and Arrow-native transport mean `filter` actually filters records instead of corrupting bytes.
+
 ### Agents need control, not just output.
 When an agent orchestrates a pipeline, it needs more than the final byte stream. It needs to know which stage is slow, what types are flowing, whether a producer is paused or erroring. The control plane gives agents transparent, real-time visibility into every stage — typed contracts (`HELO/ACK`), flow state (`PAUSE/RESUME`), lifecycle (`STOP/ERROR`), and structured diagnostics. A pipeline becomes something an agent can reason about, not a black box it hopes will work.
 
