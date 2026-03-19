@@ -84,16 +84,16 @@ def main():
     pattern = re.compile(pattern_str, re.IGNORECASE)
 
     # Wait to see what upstream sends, then adapt
-    pipe = NewPipe(mime_type="application/json")
+    pipe = NewPipe(defer_helo=True)
     upstream = pipe.wait_for_upstream(timeout=2.0)
 
     if upstream == ARROW_MIME:
-        # Switch our output MIME to match
         pipe.mime_type = ARROW_MIME
         pipe.signals.send("HELO", mime_type=ARROW_MIME)
         pipe.wait_for_ready(timeout=0.5)
         filter_arrow(pipe, column, pattern_str)
     else:
+        pipe.signals.send("HELO", mime_type="application/json")
         pipe.wait_for_ready(timeout=0.5)
         filter_json(pipe, column, pattern)
 

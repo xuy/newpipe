@@ -205,6 +205,20 @@ describe('Edge cases', () => {
   });
 });
 
+describe('Python SDK signal plane', () => {
+  // Regression: SDK used `fd` parameter instead of `self.fd`, causing
+  // SignalPlane to silently fail when fd was resolved from env var
+  it('should route signals between Python commands (gen | filter)', () => {
+    const output = run('gen | filter source python | head 1');
+    expect(output).toContain('python-sdk');
+  });
+
+  it('should route signals through multi-stage Python pipeline (gen | filter | head)', () => {
+    const output = run('gen | filter index 1 | head 1');
+    expect(output).toContain('index');
+  });
+});
+
 describe('Error handling', () => {
   it('should handle nonexistent command gracefully', () => {
     const result = runRaw('nonexistent_cmd_xyz');

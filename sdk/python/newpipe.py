@@ -15,9 +15,9 @@ class SignalPlane:
             # The shell creates this as a socketpair, so a single FD supports
             # both reading and writing. We dup() to get separate file objects
             # so closing one doesn't invalidate the other.
-            read_fd = os.dup(fd)
+            read_fd = os.dup(self.fd)
             self.read_pipe = os.fdopen(read_fd, 'r')
-            self.write_pipe = os.fdopen(fd, 'w')
+            self.write_pipe = os.fdopen(self.fd, 'w')
             self.thread = threading.Thread(target=self._listen, daemon=True)
             self.thread.start()
         except Exception as e:
@@ -47,7 +47,7 @@ class SignalPlane:
         self.write_pipe.flush()
 
 class NewPipe:
-    def __init__(self, mime_type="application/json"):
+    def __init__(self, mime_type="application/json", defer_helo=False):
         self.signals = SignalPlane()
         self.mime_type = mime_type
         self.upstream_mime = None  # Set when we receive an upstream HELO
@@ -59,8 +59,9 @@ class NewPipe:
 
         self.signals.on_signal(self._handle_signal)
 
-        # Initial Handshake
-        self.signals.send("HELO", mime_type=self.mime_type)
+        # Initial Handshake — skip if caller will decide MIME type later
+        if not defer_helo:
+            self.signals.send("HELO", mime_type=self.mime_type)
 
     def _handle_signal(self, msg):
         t = msg.get("type")
