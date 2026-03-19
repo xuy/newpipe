@@ -1,7 +1,7 @@
 # NewPipe 🐚
 ### Rethinking Unix Pipes for the Agentic Era
 
-**NewPipe is a protocol**, not just a shell. It replaces the 50-year-old "unstructured byte stream" pipe with **Three Orthogonal Planes** — giving processes typed records, bidirectional backpressure, and out-of-band control, in any language.
+NewPipe is a protocol that upgrades the Unix pipe with **framed records** and a **bidirectional control channel** — giving processes typed data, backpressure, and negotiation. The shell is the reference implementation.
 
 ## The Problem
 
@@ -26,9 +26,9 @@ tail -f /var/log/app.log | sed 's/foo/bar/' | tee out.log  # sed wrong? kill, fi
 - **No observability.** A pipeline stalls and you can't tell which stage is slow — there's no signaling between stages.
 - **No hot-swap.** A bug in the middle of a long-running pipeline means killing everything and restarting from scratch.
 
-## The Three Planes
+## The Solution: Framed Records and a Control Channel
 
-NewPipe decomposes process communication into three strictly separated physical channels:
+NewPipe keeps stdin/stdout and stderr, but upgrades them with structure — and adds one new channel:
 
 ```
             +------------------+                +------------------+
@@ -48,25 +48,18 @@ NewPipe decomposes process communication into three strictly separated physical 
 ```
 
 1. **Data Plane (FD 0/1):** A continuous stream of length-prefixed frames — `[len(4)][payload][len(4)][payload]...`. Each record is self-delimiting. No process ever has to guess where one ends and the next begins.
-2. **Control Plane (FD 3):** Bidirectional NDJSON. Type negotiation (`HELO/ACK`), backpressure (`PAUSE/RESUME`), and lifecycle (`STOP/ERROR`).
-3. **Diagnostic Plane (FD 2):** Logs readable by both humans and agents. An operator sees status; an agent parses diagnostics to reason about the pipeline. Never interferes with the data stream.
+2. **Control Plane (FD 3):** The new channel. Bidirectional NDJSON. Type negotiation (`HELO/ACK`), backpressure (`PAUSE/RESUME`), and lifecycle (`STOP/ERROR`). This is the nervous system Unix pipes never had.
+3. **Diagnostic Plane (FD 2):** stderr, with a contract — readable by both humans and agents. Never interferes with the data stream.
 
 ## Why Now
 
-Unix pipes are powerful — and AI agents already use them. But pipes are not agent-native. This is our effort to push the boundary.
+Unix pipes are powerful — and AI agents already use them. But pipes are not agent-native.
 
-### Agents handle multimodal data. Pipes only handle text.
-Agents work with images, audio, binary formats, structured records, embeddings — not just ASCII lines. A scanned invoice is a PNG. A podcast is audio. A dataset is Arrow batches. None of these survive a trip through `grep`. Today, agents are forced to serialize everything to text before piping, losing structure, type safety, and performance. NewPipe's framed data plane carries any content type natively, with each stage declaring what it produces and what it consumes via HELO.
+- **Agents handle multimodal data. Pipes only handle text.** A scanned invoice is a PNG. A podcast is audio. A dataset is Arrow batches. None of these survive a trip through `grep`. NewPipe's framed data plane carries any content type natively, with each stage declaring what it produces and consumes.
 
-### Subagents can reside inside the pipe.
-An LLM is just another transform — records in, records out. In NewPipe, an agent is a regular pipeline stage. It receives typed, structured records. When inference is slow, upstream PAUSEs automatically. When the prompt needs schema context, the control plane provides it. Classical tools and AI subagents compose in a single expression:
+- **Subagents can reside inside the pipe.** An LLM is just another transform — records in, records out. When inference is slow, upstream PAUSEs automatically. Classical tools and AI subagents compose in a single expression: `scan invoices/ | llm "flag suspicious" | filter flagged eq true | view`
 
-```bash
-scan invoices/ | llm "flag suspicious entries" | filter flagged eq true | view
-```
-
-### Agents need control, not just output.
-When an agent orchestrates a pipeline, it needs more than the final byte stream. It needs to know which stage is slow, what types are flowing, whether a producer is paused or erroring. The control plane gives agents transparent, real-time visibility into every stage — typed contracts (`HELO/ACK`), flow state (`PAUSE/RESUME`), lifecycle (`STOP/ERROR`), and structured diagnostics. A pipeline becomes something an agent can reason about, not a black box it hopes will work.
+- **Agents need control, not just output.** When an agent orchestrates a pipeline, it needs to know which stage is slow, what types are flowing, whether a producer is paused or erroring. The control plane makes every pipeline transparent and observable.
 
 ## Quick Start
 
@@ -76,7 +69,7 @@ npm install && npm run build
 
 # Try it
 ./newpipe "ls | head 2"
-./newpipe "pcat train.parquet | grep Madison | head 1"
+./newpipe "pcat train.parquet | filter city Chicago | count"
 ./newpipe "gen | slow"   # watch backpressure in action
 ```
 
@@ -101,8 +94,6 @@ pcat data.parquet | filter city Chicago | sort age | cols city,age,occupation | 
 pcat data.parquet | unique occupation | count
 ```
 
-**More demos:**
-
 | Demo | Command | What You'll See |
 | :--- | :--- | :--- |
 | **Polyglot** | `pcat data.parquet \| grep Madison` | Parquet reader and text grep composed seamlessly via adapters. |
@@ -111,7 +102,7 @@ pcat data.parquet | unique occupation | count
 
 ## Write Your Own Command
 
-A NewPipe command is any executable that speaks the three-plane protocol. Write it in any language — Python, TypeScript, Rust, Go, C — as long as it reads/writes framed records on FD 0/1 and speaks NDJSON on FD 3, it composes with everything else.
+A NewPipe command is any executable that speaks the protocol. Write it in any language — as long as it reads/writes framed records on FD 0/1 and speaks NDJSON on FD 3, it composes with everything else.
 
 SDKs handle the protocol for you:
 
@@ -191,14 +182,8 @@ The shell is a pure switchboard: it routes signals between adjacent stages, inje
 Querying a Parquet file today means writing a pandas script or prompting an LLM to write one. With NewPipe, the pipe *is* the query:
 
 ```bash
-# Top 5 cities by population
 pcat data.parquet | groupby city | sort count desc | head 5
-
-# Average age of people in Chicago
-pcat data.parquet | filter city Chicago | groupby occupation age | sort count desc | head 10
-
-# How many people over 30?
-pcat data.parquet | filter age gt 30 | count
+# → Houston: 886, Brooklyn: 745, Chicago: 713, Los Angeles: 646, Philadelphia: 487
 ```
 
 No notebooks. No boilerplate. No English-to-code translation. Each stage is a word. You build queries incrementally — add a stage, see the result, refine.
