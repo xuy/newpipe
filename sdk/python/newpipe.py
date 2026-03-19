@@ -49,10 +49,12 @@ class NewPipe:
     def __init__(self, mime_type="application/json"):
         self.signals = SignalPlane()
         self.mime_type = mime_type
+        self.upstream_mime = None  # Set when we receive an upstream HELO
         self.stopped = False
         self._ready = threading.Event()
         self._flow = threading.Event()
         self._flow.set()  # Start unpaused (event is "set" = flowing)
+        self._upstream_helo = threading.Event()
 
         self.signals.on_signal(self._handle_signal)
 
@@ -63,6 +65,11 @@ class NewPipe:
         t = msg.get("type")
         if t == "ACK":
             self._ready.set()
+        elif t == "HELO":
+            self.upstream_mime = msg.get("mimeType")
+            self._upstream_helo.set()
+            # ACK back to upstream
+            self.signals.send("ACK")
         elif t == "PAUSE":
             self._flow.clear()  # Block emitters until RESUME
         elif t == "RESUME":
@@ -70,6 +77,11 @@ class NewPipe:
         elif t == "STOP":
             self.stopped = True
             self._flow.set()    # Unblock so emitters can exit
+
+    def wait_for_upstream(self, timeout=1.0):
+        """Wait for the upstream HELO and return its MIME type."""
+        self._upstream_helo.wait(timeout)
+        return self.upstream_mime
 
     @property
     def paused(self):
