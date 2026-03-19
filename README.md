@@ -113,16 +113,18 @@ In a traditional pipe, `cat file | grep pattern` works because both sides agree 
 In NewPipe, every stage announces what it produces via `HELO` on the control channel. The downstream stage sees the type and adapts. Data stays in whatever format makes sense — if both sides speak Arrow, the records flow as Arrow batches without conversion. If one side speaks JSON, it flows as JSON frames. The framing (`[len][payload]`) means records never get split or corrupted regardless of format.
 
 ```
-pcat data.parquet | filter city Chicago | sort age | arrow-lower | head 3
+pcat data.parquet | filter city Chicago | groupby occupation | sort count desc | head 5
 
   pcat      → HELO "application/vnd.apache.arrow.stream"
   filter    → receives HELO, adapts to Arrow, filters columnar
-  sort      → receives Arrow, sorts columnar, re-emits Arrow
-  arrow-lower → converts to JSON at the display boundary
-  head      → takes first 3 JSON records
+  groupby   → aggregates Arrow batches, emits JSON results
+  sort      → receives JSON, sorts by field
+  head      → takes first 5 records
 ```
 
-Contrast with the text world — the same pipeline on JSON works identically, just with a different MIME type flowing through the same protocol:
+Each stage announces its output type via HELO. Downstream stages adapt. Data stays in Arrow where it's efficient (filter, groupby) and flows as JSON where it's natural (sort, head, view). The framing (`[len][payload]`) means records never get split or corrupted regardless of format.
+
+The same `filter` command works on JSON too — the protocol handles it:
 
 ```
 gen | filter source python | head 3
@@ -131,8 +133,6 @@ gen | filter source python | head 3
   filter    → receives HELO, adapts to JSON, matches with regex
   head      → takes first 3 records
 ```
-
-Same `filter` command. Different data. The protocol handles it.
 
 ### How flow control works
 
@@ -179,7 +179,7 @@ pcat data.parquet | groupby city | sort count desc | head 5
 pcat data.parquet | filter age gt 30 | count
 # → {"count": 55475}
 
-pcat data.parquet | filter city Chicago | sort age | cols city,age,occupation | arrow-lower | head 3
+pcat data.parquet | filter city Chicago | groupby occupation age | sort count desc | head 5
 ```
 
 No notebooks. No boilerplate. Each stage is a word. You build queries incrementally — add a stage, see the result, refine. This is impossible with traditional pipes, where `cat data.parquet | grep Chicago` corrupts a binary file. The protocol is what makes the expression meaningful.
