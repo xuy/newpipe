@@ -65,15 +65,6 @@ An LLM is just another transform — records in, records out. In NewPipe, an age
 scan invoices/ | llm "flag suspicious entries" | filter flagged eq true | view
 ```
 
-### The pipe becomes a query language.
-With traditional pipes, querying a Parquet file means writing a pandas script or prompting an LLM to write one for you. With NewPipe, the pipe *is* the query:
-
-```bash
-pcat data.parquet | filter city Chicago | groupby occupation | sort count desc | head 5
-```
-
-No notebooks. No boilerplate. No English-to-code translation. Each stage is a word. You build queries incrementally — add a stage, see the result, refine. This only works because the protocol gives pipes structure: framed records, type negotiation, and Arrow-native transport mean `filter` actually filters records instead of corrupting bytes.
-
 ### Agents need control, not just output.
 When an agent orchestrates a pipeline, it needs more than the final byte stream. It needs to know which stage is slow, what types are flowing, whether a producer is paused or erroring. The control plane gives agents transparent, real-time visibility into every stage — typed contracts (`HELO/ACK`), flow state (`PAUSE/RESUME`), lifecycle (`STOP/ERROR`), and structured diagnostics. A pipeline becomes something an agent can reason about, not a black box it hopes will work.
 
@@ -194,6 +185,25 @@ newpipe "pcat data.parquet | grep Madison | head 1"
 ```
 
 The shell is a pure switchboard: it routes signals between adjacent stages, injects adapters at smart/legacy boundaries, and appends `view` when a pipeline ends at the terminal. Commands are polymorphic — `filter` checks the upstream HELO MIME type and dispatches to Arrow or JSON processing automatically. The language a command is written in doesn't matter — only whether it speaks the protocol.
+
+## Case Study: The Pipe as a Query Language
+
+Querying a Parquet file today means writing a pandas script or prompting an LLM to write one. With NewPipe, the pipe *is* the query:
+
+```bash
+# Top 5 cities by population
+pcat data.parquet | groupby city | sort count desc | head 5
+
+# Average age of people in Chicago
+pcat data.parquet | filter city Chicago | groupby occupation age | sort count desc | head 10
+
+# How many people over 30?
+pcat data.parquet | filter age gt 30 | count
+```
+
+No notebooks. No boilerplate. No English-to-code translation. Each stage is a word. You build queries incrementally — add a stage, see the result, refine.
+
+This is impossible with traditional pipes. `cat data.parquet | grep Chicago` corrupts a binary file. But NewPipe's protocol — framed records, type negotiation, Arrow-native transport — means `filter` actually operates on structured records, `groupby` aggregates columnar data, and the whole pipeline stays in Arrow until the display boundary. The pipe becomes a direct manipulation interface for structured data.
 
 ---
 
