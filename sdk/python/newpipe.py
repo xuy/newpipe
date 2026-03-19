@@ -122,14 +122,44 @@ class NewPipe:
         sys.stdout.buffer.flush()
 
     def records(self):
-        """Generator for incoming records from stdin"""
+        """Generator for incoming JSON records from stdin"""
         while not self.stopped:
             header = sys.stdin.buffer.read(4)
             if not header: break
             length = struct.unpack('>I', header)[0]
             payload = sys.stdin.buffer.read(length)
-            
+
             try:
                 yield json.loads(payload.decode('utf-8'))
             except:
                 yield payload
+
+    def frames(self):
+        """Generator for raw framed payloads from stdin (bytes)"""
+        while not self.stopped:
+            header = sys.stdin.buffer.read(4)
+            if not header or len(header) < 4:
+                break
+            length = struct.unpack('>I', header)[0]
+            payload = sys.stdin.buffer.read(length)
+            if len(payload) < length:
+                break
+            yield payload
+
+    def emit_arrow(self, batch):
+        """Emit an Arrow RecordBatch as a framed IPC stream."""
+        import pyarrow as pa
+        sink = pa.BufferOutputStream()
+        writer = pa.ipc.new_stream(sink, batch.schema)
+        writer.write_batch(batch)
+        writer.close()
+        self.emit_raw(sink.getvalue().to_pybytes())
+
+    def arrow_batches(self):
+        """Generator for Arrow RecordBatches from framed stdin."""
+        import pyarrow as pa
+        for payload in self.frames():
+            if self.stopped: break
+            reader = pa.ipc.open_stream(payload)
+            for batch in reader:
+                yield batch

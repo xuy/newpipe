@@ -59,8 +59,8 @@ describe('Shell - Adapter Injection', () => {
     expect(output.trim()).toBe('');
   });
 
-  it('should lower smart output and pipe to sort (legacy)', () => {
-    const output = run('"ls | sort"');
+  it('should lower smart output and pipe to legacy (ls | rev)', () => {
+    const output = run('"ls | rev"');
     expect(output.length).toBeGreaterThan(0);
   });
 });
