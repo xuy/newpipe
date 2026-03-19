@@ -5,7 +5,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "npx tsc",
+    "build": "node scripts/build-bin.js",
     "test": "npx vitest run",
     "mcp": "node dist/src/mcp-server.js"
   },

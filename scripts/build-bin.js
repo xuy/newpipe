@@ -113,6 +113,21 @@ if (fs.existsSync(COMMANDS_DIR)) {
   }
 }
 
+// ─── Step 4: Create adapter shims (lift, lower) ─────────────────────
+console.log('\nBuilding adapters:');
+const adapterDir = path.join(ROOT, 'dist/src/core/adapters');
+if (fs.existsSync(adapterDir)) {
+  for (const f of fs.readdirSync(adapterDir)) {
+    if (!f.endsWith('.js') || f.endsWith('.d.js')) continue;
+    const name = path.basename(f, '.js');
+    const target = path.join(adapterDir, f);
+    const shim = `#!/usr/bin/env bash\nnode --no-warnings "${target}" "$@"\n`;
+    fs.writeFileSync(path.join(BIN_DIR, name), shim);
+    fs.chmodSync(path.join(BIN_DIR, name), '755');
+    console.log(`  [adapter] ${name}`);
+  }
+}
+
 // ─── Summary ─────────────────────────────────────────────────────────
 const binCount = fs.readdirSync(BIN_DIR).length;
 console.log(`\nBuild complete: ${binCount} commands in dist/bin/`);
