@@ -8,15 +8,15 @@ But it was designed for human operators and ASCII teletypes. Agents don't think 
 
 **NewPipe makes pipes agent-native.**
 
-## Three Planes, Not One
+## One New Channel Changes Everything
 
-The Unix pipe is a single undifferentiated byte stream. NewPipe decomposes it into three:
+Unix already gives you data (stdin/stdout) and diagnostics (stderr). But there's no way for processes to talk *to each other* about the data — no types, no negotiation, no flow control. NewPipe adds one thing: a **control plane** on FD 3. And it upgrades the data channel from raw bytes to framed records.
 
-- **Data Plane** — Framed, typed records. A stream of `[length][payload]` frames, not raw bytes. No process ever has to guess where a record ends. Binary, images, Arrow batches — any content type, declared up front.
+- **Data Plane (FD 0/1)** — Framed, typed records. A stream of `[length][payload]` frames, not raw bytes. No process ever has to guess where a record ends. Binary, images, Arrow batches — any content type, declared up front.
 
-- **Control Plane** — Bidirectional negotiation, out of band. Before data flows, producer and consumer shake hands (`HELO/ACK`). If the consumer is overwhelmed, the producer halts (`PAUSE/RESUME`). If something breaks, the error travels separately (`ERROR`). The pipeline has a nervous system.
+- **Control Plane (FD 3)** — The new channel. Bidirectional negotiation, out of band. Before data flows, producer and consumer shake hands (`HELO/ACK`). If the consumer is overwhelmed, the producer halts (`PAUSE/RESUME`). If something breaks, the error travels separately (`ERROR`). This is the nervous system Unix never had.
 
-- **Diagnostic Plane** — Observable by humans and agents. Logs and status that never corrupt the data stream. An operator sees what's happening; an agent parses it to reason about the pipeline.
+- **Diagnostic Plane (FD 2)** — stderr, but with a contract: observable by humans and agents alike. Logs and status that never corrupt the data stream.
 
 ## Negotiation, Not Fire-and-Forget
 
